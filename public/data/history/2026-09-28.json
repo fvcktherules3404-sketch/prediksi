@@ -1,1 +1,1 @@
-{"version":1,"generatedAt":"2026-09-28T14:08:29.800Z","window":{"start":"2026-09-27T23:00:00.000Z","end":"2026-09-28T22:59:59.000Z"},"ai":{"used":false,"model":"gemini-2.5-flash","summarized":0},"api":{"used":3,"limit":100},"matches":[]}
+{"version":1,"generatedAt":"2026-09-28T16:59:26.225Z","window":{"start":"2026-09-27T23:00:00.000Z","end":"2026-09-28T22:59:59.000Z"},"ai":{"used":false,"model":"gemini-flash-latest","summarized":0},"api":{"used":4,"limit":100},"matches":[]}
