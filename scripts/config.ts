@@ -28,6 +28,8 @@ export const CFG = {
   maxResultDaysPerRun: 7,                            // maks hari yang dikumpulkan per run (hemat kuota)
   minOwnGames: 3,                                    // tim dengan hasil sendiri < ini dianggap "tipis" -> boleh dibantu Gemini
   geminiStandings: env.GEMINI_STANDINGS !== 'false', geminiStandingsMaxCalls: 4,
+  // --- Opini kedua AI (Gemini + Google Search memprediksi mandiri, dibandingkan dengan pick rumus) ---
+  useAiOpinion: env.AI_OPINION !== 'false', opinionBatchSize: 5, opinionMaxCalls: 4, opinionTtlH: 6,
   // --- Elo (ClubElo untuk klub, eloratings.net untuk tim nasional) ---
   useElo: env.USE_ELO !== 'false', eloTtlH: 20,
   eloShrinkK: 8,            // bobot klasemen = laga/(laga+K); sisanya Elo. Tanpa klasemen -> 100% Elo
