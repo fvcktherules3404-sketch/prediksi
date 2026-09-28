@@ -11,7 +11,7 @@ export const CFG = {
   fixturesTtlH: 5, standingsTtlH: 20, maxStaleH: 72,
   allLeagues: env.ALL_LEAGUES === 'true',
   leagues: env.LEAGUE_IDS ? env.LEAGUE_IDS.split(',').map(Number).filter(Boolean) : DEFAULT_LEAGUES,
-  geminiModel: env.GEMINI_MODEL ?? 'gemini-flash-latest', // jika 404, otomatis dicari lewat ListModels
+  geminiModel: env.GEMINI_MODEL ?? 'gemini-3.5-flash-lite', // jika 404, otomatis dicari lewat ListModels
   geminiBatchSize: 12, geminiMaxCalls: 8, // ringkasan AI untuk SEMUA laga (maks 96)
   useInjuries: env.USE_INJURIES !== 'false',  // endpoint injuries API-Football (1 request/tanggal)
   useNews: env.GEMINI_NEWS !== 'false',        // Gemini + Google Search: cedera/skorsing/susunan
