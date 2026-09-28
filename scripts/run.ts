@@ -5,7 +5,7 @@ import { CFG } from './config.ts';
 import { ApiUsage } from './apiUsage.ts';
 import { FootballApi } from './footballApi.ts';
 import { buildPrediction, leagueAverages } from './engine.ts';
-import { addAiSummaries } from './gemini.ts';
+import { addAiSummaries, addAiOpinions } from './gemini.ts';
 import { loadResults, saveResults, collectResults, ownRows } from './results.ts';
 import { fdStandings } from './footballData.ts';
 import { collectAbsences } from './news.ts';
@@ -122,6 +122,8 @@ async function main() {
   // 4) Gemini (opsional; gagal => tetap ada prediksi)
   const ai = preds.length ? await addAiSummaries(preds, process.env.GEMINI_API_KEY) : { used: false, model: CFG.geminiModel, summarized: 0, error: undefined };
 
+  const op = preds.length ? await addAiOpinions(preds, process.env.GEMINI_API_KEY) : { done: 0, agree: 0, error: undefined as string | undefined };
+
   // 5) Tulis atomik + history
   const out: PredictionsFile = { version: 1, generatedAt: new Date(now).toISOString(), window: win,
     ai: { used: ai.used, model: ai.model, summarized: ai.summarized }, api: { used: usage.used, limit: usage.limit }, matches: preds };
@@ -134,7 +136,7 @@ async function main() {
     dataSources: { ...bySrc, resultsCollected: col.added, resultsLastDate: results.lastDate },
     api: { used: usage.used, limit: usage.limit, fixturesSource: fxRes.map(r => r?.source ?? 'none').join('+') },
     absences: { api: abs.nApi, ai: abs.nAi, error: abs.error },
-    gemini: { used: ai.used, model: ai.model, summarized: ai.summarized, error: ai.error } };
+    gemini: { used: ai.used, model: ai.model, summarized: ai.summarized, opinions: op.done, opinionAgree: op.agree, error: ai.error ?? op.error } };
   writeAtomic(CFG.dataDir, 'metadata.json', meta);
   console.log(meta.message, `API ${usage.used}/${usage.limit}`, `AI ${ai.summarized}`);
 }
