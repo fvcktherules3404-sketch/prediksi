@@ -17,6 +17,7 @@ export interface Prediction {
   confidence:number; confidenceLevel:'high'|'medium'|'low';
   picks:{ result:string; pick1x2?:'1'|'X'|'2'; goals:string; safe?:string };
   aiSummary:string;
+  aiOpinion?:{ pick:'1'|'X'|'2'; score:string|null; reason:string; agree:boolean; confAdj:number };
   absences?:{ home:Absence[]; away:Absence[]; source:'ai'|'api'|'both'; checked:boolean; adj:{ home:number; away:number } };
 }
 export interface PredictionsFile {
@@ -32,5 +33,5 @@ export interface Metadata {
   dataSources?:{ official:number; own:number; ai:number; elo:number; resultsCollected:number; resultsLastDate?:string|null };
   api?:{ used:number; limit:number; fixturesSource?:string };
   absences?:{ api:number; ai:number; error?:string };
-  gemini?:{ used:boolean; model?:string; summarized:number; error?:string };
+  gemini?:{ used:boolean; model?:string; summarized:number; opinions?:number; opinionAgree?:number; error?:string };
 }
