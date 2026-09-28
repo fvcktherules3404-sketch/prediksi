@@ -77,3 +77,13 @@ assert(absenceImpact(Array.from({ length: 20 }, () => ({ name: 'x', pos: 'FWD' a
 assert.equal(validateAbsence({ name: 'A' }), null); assert.equal(validateAbsence({ name: 'John Doe', pos: 'XYZ', role: 'god' })!.role, 'rotation');
 assert.equal(mergeAbsences([{ name: 'J. Doe', pos: '?', role: 'unknown', status: 'out' }], [{ name: 'John Doe', pos: 'FWD', role: 'key', status: 'out' }]).length, 1, 'nama sama tidak dobel');
 console.log('OK', JSON.stringify({ xg: p.xg, probs: p.probs, fair: p.fairHandicap, conf: p.confidence, pick: p.picks }));
+
+// --- opini kedua AI ---
+import { validateOpinion, applyOpinion, modelPick } from './gemini.ts';
+assert.deepEqual(validateOpinion({ pick: 'x', score: '1-1', reason: ' seimbang ' }), { pick: 'X', score: '1-1', reason: 'seimbang' });
+assert.equal(validateOpinion({ pick: '1', score: '0-2', reason: 'a' })!.score, null, 'skor bertentangan dengan pick dibuang');
+assert.equal(validateOpinion({ pick: '3', reason: 'a' }), null); assert.equal(validateOpinion({ pick: '1', reason: '' }), null);
+{ const q: any = JSON.parse(JSON.stringify(pe)), c0 = q.confidence, pk = modelPick(q);
+  assert.equal(applyOpinion(q, { pick: pk, score: null, reason: 'r' }), true); assert.equal(q.confidence, Math.min(100, c0 + 5));
+  const q2: any = JSON.parse(JSON.stringify(pe)); assert.equal(applyOpinion(q2, { pick: pk === '2' ? '1' : '2', score: null, reason: 'r' }), false); assert.equal(q2.confidence, Math.max(0, c0 - 12)); assert.equal(q2.aiOpinion.agree, false); }
+console.log('opini AI OK');
