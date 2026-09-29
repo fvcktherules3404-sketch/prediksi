@@ -55,10 +55,15 @@ export function scoreMatrix(lh: number, la: number, rho = CFG.rho, drawBoost = C
 
 /** Keputusan 1X2. Seri dipilih bila laga seimbang (selisih menang-kalah kecil dan seri cukup besar) atau seri nyaris teratas.
  *  Tanpa aturan ini seri hampir tidak pernah jadi "maksimum" walau di laga seimbang. */
+/** Pick 1X2. Default = tim dengan peluang menang tertinggi. Seri hanya dipilih bila (a) peluang seri memang tertinggi, atau
+ *  (b) laga nyaris kembar (selisih kandang-tandang < 3 poin persen) dan seri >= 28%.
+ *  Backtest (klub 23k laga, timnas 45k laga): aturan lama (selisih < 7 poin & seri >= 25%) menurunkan akurasi 0,6-1,1 poin;
+ *  aturan ketat ini setara dengan "selalu pilih tim" (selisih < 0,3 poin, dalam galat) dan Seri terpilih hanya 2-6% laga. */
+export const DRAW_PICK_GAP = 0.03, DRAW_PICK_MIN = 0.28;
 export function decide1x2(ph: number, pd: number, pa: number): '1' | 'X' | '2' {
-  const top = Math.max(ph, pa), gap = Math.abs(ph - pa);
-  if ((gap < 0.07 && pd >= 0.25) || pd >= top - 0.03) return 'X';
-  return ph > pa ? '1' : '2';
+  if (pd > ph && pd > pa) return 'X';
+  if (Math.abs(ph - pa) < DRAW_PICK_GAP && pd >= DRAW_PICK_MIN) return 'X';
+  return ph >= pa ? '1' : '2';
 }
 
 const settle = (d: number, line: number) => { const x = d + line; return x > 1e-9 ? 'W' : Math.abs(x) < 1e-9 ? 'P' : 'L'; };
