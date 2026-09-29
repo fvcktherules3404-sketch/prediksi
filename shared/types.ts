@@ -22,7 +22,7 @@ export interface Prediction {
   conf?:{ core:number; quality:number; agreement:number; comp:number };
   picks:{ result:string; pick1x2?:'1'|'X'|'2'; goals:string; safe?:string };
   aiSummary:string;
-  aiOpinion?:{ pick:'1'|'X'|'2'; score:string|null; reason:string; style?:string; agree:boolean; confAdj:number };
+  aiOpinion?:{ pick:'1'|'X'|'2'; score:string|null; reason:string; style?:string; btts?:'yes'|'no'; ou25?:'over'|'under'; hdp?:{ side:'1'|'2'; line:number }; agree:boolean; confAdj:number };
   absences?:{ home:Absence[]; away:Absence[]; source:'ai'|'api'|'both'; checked:boolean; adj:{ home:number; away:number } };
   /** Model murni (Poisson/Elo/absen) sebelum digabung pasar & kalibrasi. Dipakai evaluate.ts untuk menuning bobot. */
   modelProbs?:Probs3;
@@ -57,7 +57,7 @@ export interface Calibration {
   byLevel:Record<'high'|'medium'|'low', HitStat>;
   bins:{ label:string; n:number; acc:number|null; meanConf:number|null }[];
   ou25:HitStat; btts:HitStat;
-  ai:{ agree:HitStat; disagree:HitStat; own?:HitStat; formulaSame?:HitStat };
+  ai:{ agree:HitStat; disagree:HitStat; own?:HitStat; formulaSame?:HitStat; ou25?:HitStat; btts?:HitStat; hdp?:HitStat };
   market:{ n:number; llModel:number|null; llMarket:number|null; llBlend:number|null; bestW:number|null };
   tuning:{ tauRaw:number|null; tau:number; marketW:number; note:string };
   recent:{ home:string; away:string; pick:string; score:string; hit:boolean }[];
