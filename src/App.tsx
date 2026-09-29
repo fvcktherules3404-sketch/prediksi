@@ -74,11 +74,39 @@ function Card({ p }: { p: Prediction }) {
   );
 }
 
+const pickLabel = (p: Prediction, k: '1' | 'X' | '2') => (k === '1' ? `${p.home.name} menang` : k === '2' ? `${p.away.name} menang` : 'Seri');
+function AiCard({ p }: { p: Prediction }) {
+  const o = p.aiOpinion;
+  if (!o) return null;
+  return (
+    <article className="card">
+      <header><span>{p.league.name}{p.league.country ? ` · ${p.league.country}` : ''}</span><span>{time(p.kickoff)}</span></header>
+      <div className="teams">
+        <div>{p.home.logo && <img src={p.home.logo} alt="" loading="lazy" />}<b>{p.home.name}</b></div>
+        <div className="vs">Skor AI<br /><b>{o.score ?? '–'}</b></div>
+        <div>{p.away.logo && <img src={p.away.logo} alt="" loading="lazy" />}<b>{p.away.name}</b></div>
+      </div>
+      <div className="chips">
+        <span className="chip">🤖 Pick AI: {pickLabel(p, o.pick)}</span>
+        <span className="chip" title="Pick dari rumus (Poisson/Elo/pasar), dihitung terpisah dari AI">Rumus: {p.picks.result}</span>
+        <span className={`chip ${o.agree ? 'high' : 'low'}`}>{o.agree ? 'AI & rumus sepakat' : 'AI & rumus beda'}</span>
+      </div>
+      <p className="aiop"><b>Alasan:</b> {o.reason}</p>
+      {o.style && <p className="aiop"><b>Pola permainan:</b> {o.style}</p>}
+    </article>
+  );
+}
+function AiTrack({ c }: { c: Calibration }) {
+  const o = c.ai.own, f = c.ai.formulaSame;
+  if (!o || !o.n) return <div className="track"><b>Rekam jejak AI</b> — belum ada laga berpick AI yang selesai dinilai.</div>;
+  return <div className="track"><b>Rekam jejak AI</b> · pick AI benar {acc(o.acc)} ({o.n} laga) · rumus pada laga yang sama {acc(f?.acc)}. {o.n < 30 && <small>Sampel masih sangat kecil; jangan disimpulkan.</small>}</div>;
+}
+
 export default function App() {
   const [data, setData] = useState<PredictionsFile | null>(null);
   const [meta, setMeta] = useState<Metadata | null>(null);
   const [cal, setCal] = useState<Calibration | null>(null);
-  const [err, setErr] = useState('');
+  const [err, setErr] = useState(''); const [tab, setTab] = useState<'formula' | 'ai'>('formula');
   const [league, setLeague] = useState('all'); const [q, setQ] = useState(''); const [sort, setSort] = useState<'time' | 'conf'>('time');
   useEffect(() => {
     const t = Date.now();
@@ -105,7 +133,13 @@ export default function App() {
         <select value={sort} onChange={e => setSort(e.target.value as 'time' | 'conf')}><option value="time">Urut jam</option><option value="conf">Urut keyakinan</option></select>
       </div>
       {data && !list.length && <p className="sub">Tidak ada pertandingan pada window ini{q || league !== 'all' ? ' (sesuai filter)' : ''}.</p>}
-      <div className="grid">{list.map(m => <Card key={m.id} p={m} />)}</div>
+      <div className="tabs"><button className={tab === 'formula' ? 'on' : ''} onClick={() => setTab('formula')}>📊 Prediksi Rumus</button><button className={tab === 'ai' ? 'on' : ''} onClick={() => setTab('ai')}>🤖 Opini AI</button></div>
+      {tab === 'formula' ? <div className="grid">{list.map(m => <Card key={m.id} p={m} />)}</div> : <>
+        <p className="sub">Prediksi murni dari AI (Gemini + pencarian web). AI tidak diberi angka rumus dan tidak mengubah peluang di tab Prediksi Rumus. Hanya laga yang punya sumber web yang dianalisis ({list.filter(m => m.aiOpinion).length} dari {list.length} laga).</p>
+        {cal && <AiTrack c={cal} />}
+        <div className="grid">{list.filter(m => m.aiOpinion).map(m => <AiCard key={m.id} p={m} />)}</div>
+        {!list.some(m => m.aiOpinion) && <p className="sub">Belum ada opini AI pada window ini.</p>}
+      </>}
       <footer>Prediksi adalah estimasi statistik, bukan jaminan hasil. Cedera/skorsing hanya diperhitungkan sebagian (dari laporan yang tersedia), susunan pemain resmi tidak. Untuk hiburan &amp; analisis. Perjudian dilarang di Indonesia — jangan gunakan untuk taruhan.</footer>
     </main>
   );
