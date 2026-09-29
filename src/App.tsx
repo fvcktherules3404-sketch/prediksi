@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Prediction, PredictionsFile, Metadata } from '../shared/types.ts';
+import type { Prediction, PredictionsFile, Metadata, Calibration } from '../shared/types.ts';
 
 const base = import.meta.env.BASE_URL;
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -15,6 +15,22 @@ function Src({ s }: { s?: 'official' | 'own' | 'ai' | 'elo' }) {
   if (s === 'ai') return <em className="src ai" title="Data klasemen dari AI (Gemini + pencarian web), belum terverifikasi">AI?</em>;
   if (s === 'own') return <em className="src own" title="Klasemen dihitung dari hasil pertandingan yang dikumpulkan sendiri; sampel bisa masih kecil">hasil</em>;
   return null;
+}
+const acc = (x: number | null | undefined) => (x === null || x === undefined ? '–' : `${Math.round(x * 100)}%`);
+function Track({ c }: { c: Calibration }) {
+  if (!c.n) return <div className="track"><b>Rekam jejak</b> — belum ada laga yang selesai dinilai. Akan terisi otomatis setelah hasil pertandingan terkumpul.</div>;
+  const few = c.n < 30;
+  return (
+    <details className="track">
+      <summary><b>Rekam jejak</b> · {c.n} laga dinilai · tebakan 1X2 benar {acc(c.acc)} · Brier {c.brier?.toFixed(3)} <small>(acak {c.uniform.brier.toFixed(3)}, makin kecil makin baik)</small></summary>
+      {few && <p className="sub">Baru {c.n} laga: angka masih sangat berfluktuasi dan belum cukup untuk menyimpulkan apa pun.</p>}
+      <p>Log-loss {c.logloss?.toFixed(3)} <small>(acak {c.uniform.logloss.toFixed(3)})</small> · Over/Under 2.5 benar {acc(c.ou25.acc)} ({c.ou25.n}) · BTTS benar {acc(c.btts.acc)} ({c.btts.n})</p>
+      <p><b>Apakah keyakinan tinggi memang lebih sering benar?</b> Tinggi {acc(c.byLevel.high.acc)} ({c.byLevel.high.n}) · Sedang {acc(c.byLevel.medium.acc)} ({c.byLevel.medium.n}) · Rendah {acc(c.byLevel.low.acc)} ({c.byLevel.low.n})</p>
+      {c.market.n > 0 && <p>Pasar vs model ({c.market.n} laga): log-loss model {c.market.llModel?.toFixed(3) ?? '–'} · pasar {c.market.llMarket?.toFixed(3) ?? '–'} · gabungan {c.market.llBlend?.toFixed(3) ?? '–'}</p>}
+      <p><small>{c.tuning.note}</small></p>
+      {!!c.recent.length && <p className="rec">{c.recent.slice(0, 12).map((r, i) => <span key={i} className={r.hit ? 'ok' : 'no'} title={`${r.home} ${r.score} ${r.away} · pick ${r.pick}`}>{r.hit ? '✓' : '✗'} {r.home} {r.score} {r.away}</span>)}</p>}
+    </details>
+  );
 }
 function Card({ p }: { p: Prediction }) {
   const { home: h, draw: d, away: a } = p.probs;
@@ -33,6 +49,7 @@ function Card({ p }: { p: Prediction }) {
         <span className="chip">Pick: {p.picks.result}</span>
         {p.picks.safe && <span className="chip">Aman: {p.picks.safe}</span>}
         <span className="chip">{p.picks.goals} ({pct(p.picks.goals === 'Over 2.5' ? p.ou[1].over : p.ou[1].under)})</span>
+        {p.market && <span className="chip" title={`Peluang implisit pasar (margin dibuang, ${p.market.books} bandar) ikut dihitung`}>Pasar {pct(p.market.home)}/{pct(p.market.draw)}/{pct(p.market.away)}</span>}
         {p.absences && <span className="chip" title="Pemain absen memengaruhi xG">🩹 Absen {p.absences.home.length}-{p.absences.away.length}</span>}
         <span className="chip">BTTS {pct(p.btts.yes)}</span>
         <span className="chip">AH adil {fmtLine(p.fairHandicap)}</span>
@@ -41,6 +58,8 @@ function Card({ p }: { p: Prediction }) {
       <details><summary>Detail skor, gol & handicap</summary>
         {p.absences && <div><p><b>Pemain absen/diragukan</b> ({p.absences.source === 'api' ? 'API, peran belum diketahui' : p.absences.source === 'both' ? 'AI + API' : 'AI + pencarian web, belum terverifikasi'}) — penyesuaian xG {p.absences.adj.home >= 0 ? '+' : ''}{(p.absences.adj.home * 100).toFixed(1)}% / {p.absences.adj.away >= 0 ? '+' : ''}{(p.absences.adj.away * 100).toFixed(1)}%</p>
           {(['home', 'away'] as const).map(sd => <p key={sd}><b>{p[sd].name}:</b> {p.absences![sd].length ? p.absences![sd].map(a => `${a.name}${a.pos !== '?' ? ` (${a.pos}${a.role === 'key' ? ', kunci' : ''})` : ''}${a.status === 'doubt' ? ' ?' : ''}`).join(', ') : 'tidak ada laporan'}</p>)}</div>}
+        {p.modelProbs && <p><b>Sumber peluang:</b> model {pct(p.modelProbs.home)}/{pct(p.modelProbs.draw)}/{pct(p.modelProbs.away)}{p.market ? ` · pasar ${pct(p.market.home)}/${pct(p.market.draw)}/${pct(p.market.away)} (bobot ${pct(p.calib?.marketW ?? 0)})` : ' · tanpa data pasar'} → akhir {pct(h)}/{pct(d)}/{pct(a)}</p>}
+        {p.conf && <p><b>Keyakinan {p.confidence}</b> = ketegasan {pct(p.conf.core)} × kualitas data {pct(p.conf.quality)} × kesepakatan sumber {pct(p.conf.agreement)}{p.conf.comp < 1 ? ` × laga persahabatan ${pct(p.conf.comp)}` : ''}</p>}
         <p><b>Skor teratas:</b> {p.topScores.map(s => `${s.score} (${pct(s.p)})`).join(' · ')}</p>
         <p><b>Over/Under:</b> {p.ou.map(o => `${o.line}: O ${pct(o.over)} / U ${pct(o.under)}`).join(' · ')}</p>
         <p><b>Double chance:</b> 1X {pct(p.doubleChance.hx)} · X2 {pct(p.doubleChance.xa)} · 12 {pct(p.doubleChance.ha)}</p>
@@ -56,12 +75,14 @@ function Card({ p }: { p: Prediction }) {
 export default function App() {
   const [data, setData] = useState<PredictionsFile | null>(null);
   const [meta, setMeta] = useState<Metadata | null>(null);
+  const [cal, setCal] = useState<Calibration | null>(null);
   const [err, setErr] = useState('');
   const [league, setLeague] = useState('all'); const [q, setQ] = useState(''); const [sort, setSort] = useState<'time' | 'conf'>('time');
   useEffect(() => {
     const t = Date.now();
     fetch(`${base}data/predictions.json?t=${t}`).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).then(setData).catch(e => setErr(String(e)));
     fetch(`${base}data/metadata.json?t=${t}`).then(r => (r.ok ? r.json() : null)).then(setMeta).catch(() => {});
+    fetch(`${base}data/calibration.json?t=${t}`).then(r => (r.ok ? r.json() : null)).then(setCal).catch(() => {});
   }, []);
   const leagues = useMemo(() => [...new Set((data?.matches ?? []).map(m => m.league.name))].sort(), [data]);
   const list = useMemo(() => (data?.matches ?? [])
@@ -71,10 +92,11 @@ export default function App() {
   return (
     <main>
       <h1>⚽ Prediksi Bola Statistik</h1>
-      <p className="sub">Model Poisson + Dixon-Coles, dihitung otomatis tiap hari. 100% gratis.</p>
+      <p className="sub">Model Poisson + Dixon-Coles + Elo, digabung probabilitas pasar dan dikalibrasi dari rekam jejak. 100% gratis.</p>
       {meta?.status === 'failed' && <div className="warn">Update terakhir gagal ({meta.message}). Menampilkan prediksi terakhir yang berhasil.</div>}
       {err && <div className="warn">Belum ada data prediksi ({err}). Jalankan workflow “Daily Predictions” di GitHub Actions.</div>}
       {data && <p className="sub">Window: {time(data.window.start)} → {time(data.window.end)} · diperbarui {time(data.generatedAt)} · AI: {data.ai.used ? `${data.ai.summarized} ringkasan (${data.ai.model})` : 'tidak aktif'}</p>}
+      {cal && <Track c={cal} />}
       <div className="filters">
         <input placeholder="Cari tim…" value={q} onChange={e => setQ(e.target.value)} />
         <select value={league} onChange={e => setLeague(e.target.value)}><option value="all">Semua liga</option>{leagues.map(l => <option key={l}>{l}</option>)}</select>
@@ -82,7 +104,7 @@ export default function App() {
       </div>
       {data && !list.length && <p className="sub">Tidak ada pertandingan pada window ini{q || league !== 'all' ? ' (sesuai filter)' : ''}.</p>}
       <div className="grid">{list.map(m => <Card key={m.id} p={m} />)}</div>
-      <footer>Prediksi adalah estimasi statistik, bukan jaminan hasil, dan tidak memperhitungkan cedera/susunan pemain. Untuk hiburan &amp; analisis. Perjudian dilarang di Indonesia — jangan gunakan untuk taruhan.</footer>
+      <footer>Prediksi adalah estimasi statistik, bukan jaminan hasil. Cedera/skorsing hanya diperhitungkan sebagian (dari laporan yang tersedia), susunan pemain resmi tidak. Untuk hiburan &amp; analisis. Perjudian dilarang di Indonesia — jangan gunakan untuk taruhan.</footer>
     </main>
   );
 }
