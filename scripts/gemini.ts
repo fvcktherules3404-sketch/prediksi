@@ -3,6 +3,7 @@ import { CFG } from './config.ts';
 import { geminiGenerate } from './geminiCall.ts';
 import { readCache, writeCache } from './cache.ts';
 import { extractJsonArray } from './geminiStandings.ts';
+import { formatHits, hasSearch, searchMatch } from './search.ts';
 
 /** Gemini hanya menulis ringkasan teks. Semua angka berasal dari engine. Tanpa Google Search grounding (bisa berbiaya). */
 export async function addAiSummaries(preds: Prediction[], key: string | undefined, model = CFG.geminiModel) {
@@ -33,7 +34,7 @@ export async function addAiSummaries(preds: Prediction[], key: string | undefine
   return out;
 }
 
-/** ===== Opini kedua AI: Gemini + Google Search memprediksi SECARA MANDIRI (tidak diberi angka model, supaya tidak ikut-ikutan). =====
+/** ===== Opini kedua AI: Gemini membaca hasil pencarian web (Tavily) lalu memprediksi SECARA MANDIRI (tidak diberi angka model, supaya tidak ikut-ikutan). =====
  *  Hasil dibandingkan dengan pick rumus: sepakat -> keyakinan +5, beda -> -12. Angka peluang dari rumus TIDAK diubah. */
 type Pick = '1' | 'X' | '2';
 type RawOpinion = { pick: Pick; score: string | null; reason: string };
@@ -60,7 +61,7 @@ export function applyOpinion(p: Prediction, o: RawOpinion): boolean {
 
 export async function addAiOpinions(preds: Prediction[], key: string | undefined, model = CFG.geminiModel) {
   const out = { done: 0, agree: 0, error: undefined as string | undefined };
-  if (!key || !CFG.useAiOpinion) return out;
+  if (!key || !CFG.useAiOpinion || !hasSearch()) return out;
   const today = new Date().toISOString().slice(0, 10), todo: Prediction[] = [];
   const pool = [...preds].sort((a, b) => a.timestamp - b.timestamp).slice(0, CFG.opinionBatchSize * CFG.opinionMaxCalls);
   for (const p of pool) {
@@ -69,16 +70,22 @@ export async function addAiOpinions(preds: Prediction[], key: string | undefined
   }
   for (let i = 0; i < todo.length; i += CFG.opinionBatchSize) {
     const batch = todo.slice(i, i + CFG.opinionBatchSize);
-    const list = batch.map(p => ({ id: p.id, liga: p.league.name, negara: p.league.country, kandang: p.home.name, tandang: p.away.name, kickoff: p.kickoff }));
-    const prompt = `Hari ini ${today}. Kamu analis sepak bola. Cari di web (berita terbaru, form, cedera/skorsing, head-to-head) lalu beri prediksi MANDIRI untuk tiap laga berikut.\n` +
-      `pick: "1" = kandang (tim pertama) menang, "X" = seri, "2" = tandang (tim kedua) menang, untuk hasil 90 menit. score: skor akhir 90 menit, format "2-1", HARUS konsisten dengan pick. ` +
-      `reason: 1-2 kalimat bahasa Indonesia berdasarkan fakta yang benar-benar kamu temukan; JANGAN menebak, JANGAN menjamin hasil. Jika tidak menemukan informasi cukup untuk sebuah laga, OMIT laga itu.\n` +
-      `Balas HANYA JSON array: [{"id":number,"pick":"1"|"X"|"2","score":string,"reason":string}].\n\n${JSON.stringify(list)}`;
+    const blocks: string[] = [];
     try {
-      const { json: j } = await geminiGenerate(key, { contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }], generationConfig: { temperature: 0.2 } }, model);
-      const cand = j.candidates?.[0];
-      if (!cand?.groundingMetadata?.groundingChunks?.length) throw new Error('tanpa grounding (tidak ada sumber web) -> dibuang');
-      const text = (cand.content?.parts ?? []).map((x: any) => x.text ?? '').join('');
+      for (const p of batch) {
+        const hits = await searchMatch({ id: p.id, home: p.home.name, away: p.away.name });
+        if (!hits.length) continue; // tanpa sumber web -> laga ini dilewati
+        blocks.push(`### id ${p.id}: ${p.home.name} (kandang) vs ${p.away.name} (tandang), ${p.league.name} (${p.league.country}), kickoff ${p.kickoff}\nSUMBER:\n${formatHits(hits)}`);
+      }
+    } catch (e) { out.error = (e as Error).message; console.warn('[opini-web] gagal:', out.error); break; }
+    if (!blocks.length) continue;
+    const prompt = `Hari ini ${today}. Kamu analis sepak bola. Berdasarkan SUMBER web di bawah (berita terbaru, form, cedera/skorsing, head-to-head), beri prediksi MANDIRI untuk tiap laga.\n` +
+      `pick: \"1\" = kandang (tim pertama) menang, \"X\" = seri, \"2\" = tandang (tim kedua) menang, untuk hasil 90 menit. score: skor akhir 90 menit, format \"2-1\", HARUS konsisten dengan pick. ` +
+      `reason: 1-2 kalimat bahasa Indonesia berdasarkan fakta yang tertulis di SUMBER; JANGAN menebak, JANGAN memakai ingatan di luar SUMBER, JANGAN menjamin hasil. Jika SUMBER tidak cukup untuk sebuah laga, OMIT laga itu.\n` +
+      `Balas HANYA JSON array: [{\"id\":number,\"pick\":\"1\"|\"X\"|\"2\",\"score\":string,\"reason\":string}].\n\n${blocks.join('\n\n')}`;
+    try {
+      const { json: j } = await geminiGenerate(key, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2 } }, model);
+      const text = (j.candidates?.[0]?.content?.parts ?? []).map((x: any) => x.text ?? '').join('');
       for (const it of extractJsonArray(text)) {
         const p = batch.find(b => b.id === it?.id), o = p ? validateOpinion(it) : null; if (!p || !o) continue;
         writeCache(CFG.cacheDir, `ai_opinion_${p.id}`, o); out.done++; if (applyOpinion(p, o)) out.agree++;
