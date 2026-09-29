@@ -37,7 +37,7 @@ export async function addAiSummaries(preds: Prediction[], key: string | undefine
 /** ===== Opini kedua AI: Gemini membaca hasil pencarian web (Tavily) lalu memprediksi SECARA MANDIRI (tidak diberi angka model, supaya tidak ikut-ikutan). =====
  *  Hasil dibandingkan dengan pick rumus: sepakat -> keyakinan +CFG.aiAgreeBonus, beda -> -CFG.aiDisagreePenalty (kecil; validasi lewat calibration.json). Angka peluang dari rumus TIDAK diubah. */
 type Pick = '1' | 'X' | '2';
-type RawOpinion = { pick: Pick; score: string | null; reason: string };
+type RawOpinion = { pick: Pick; score: string | null; reason: string; style?: string };
 export const modelPick = (p: Prediction): Pick => p.picks.pick1x2 ?? (p.probs.home >= p.probs.draw && p.probs.home >= p.probs.away ? '1' : p.probs.away >= p.probs.draw ? '2' : 'X');
 
 /** Validasi satu opini AI; null bila tidak masuk akal (dibuang, tidak pernah diperbaiki). Skor yang bertentangan dengan pick dibuang saja. */
@@ -49,13 +49,14 @@ export function validateOpinion(x: any): RawOpinion | null {
   let score: string | null = null;
   const m = /^(\d{1,2})\s*-\s*(\d{1,2})$/.exec(String(x?.score ?? '').trim());
   if (m) { const h = Number(m[1]), a = Number(m[2]); if ((pick === '1' && h > a) || (pick === 'X' && h === a) || (pick === '2' && h < a)) score = `${h}-${a}`; }
-  return { pick: pick as Pick, score, reason };
+  const style = typeof x?.style === 'string' && x.style.trim() ? x.style.trim().slice(0, 300) : undefined; // gaya bermain/formasi (opsional, teks saja)
+  return { pick: pick as Pick, score, reason, ...(style ? { style } : {}) };
 }
 export function applyOpinion(p: Prediction, o: RawOpinion): boolean {
   const agree = o.pick === modelPick(p), adj = agree ? CFG.aiAgreeBonus : -CFG.aiDisagreePenalty;
   p.confidence = Math.max(0, Math.min(100, p.confidence + adj));
   p.confidenceLevel = p.confidence >= 50 ? 'high' : p.confidence >= 30 ? 'medium' : 'low';
-  p.aiOpinion = { pick: o.pick, score: o.score, reason: o.reason, agree, confAdj: adj };
+  p.aiOpinion = { pick: o.pick, score: o.score, reason: o.reason, ...(o.style ? { style: o.style } : {}), agree, confAdj: adj };
   return agree;
 }
 
@@ -82,7 +83,8 @@ export async function addAiOpinions(preds: Prediction[], key: string | undefined
     const prompt = `Hari ini ${today}. Kamu analis sepak bola. Berdasarkan SUMBER web di bawah (berita terbaru, form, cedera/skorsing, head-to-head), beri prediksi MANDIRI untuk tiap laga.\n` +
       `pick: \"1\" = kandang (tim pertama) menang, \"X\" = seri, \"2\" = tandang (tim kedua) menang, untuk hasil 90 menit. score: skor akhir 90 menit, format \"2-1\", HARUS konsisten dengan pick. ` +
       `reason: 1-2 kalimat bahasa Indonesia berdasarkan fakta yang tertulis di SUMBER; JANGAN menebak, JANGAN memakai ingatan di luar SUMBER, JANGAN menjamin hasil. Jika SUMBER tidak cukup untuk sebuah laga, OMIT laga itu.\n` +
-      `Balas HANYA JSON array: [{\"id\":number,\"pick\":\"1\"|\"X\"|\"2\",\"score\":string,\"reason\":string}].\n\n${blocks.join('\n\n')}`;
+      `style: 1-2 kalimat bahasa Indonesia tentang pola permainan kedua tim (formasi, gaya menyerang/bertahan, pressing, serangan balik, bola mati) HANYA jika tertulis di SUMBER; jika tidak ada, isi string kosong.\n` +
+      `Balas HANYA JSON array: [{\"id\":number,\"pick\":\"1\"|\"X\"|\"2\",\"score\":string,\"reason\":string,\"style\":string}].\n\n${blocks.join('\n\n')}`;
     try {
       const { json: j } = await geminiGenerate(key, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.2 } }, model);
       const text = (j.candidates?.[0]?.content?.parts ?? []).map((x: any) => x.text ?? '').join('');
