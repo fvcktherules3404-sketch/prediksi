@@ -53,6 +53,10 @@ export async function collectResults(api: FootballApi, res: ResultsFile, dateA: 
   const last = addDays(dateA, -1);
   const earliest = addDays(dateA, -Math.max(1, CFG.resultLookbackDays)); // batas paket API
   let from = res.lastDate ? addDays(res.lastDate, 1) : addDays(dateA, -Math.min(CFG.backfillDays, CFG.resultLookbackDays));
+  // Selalu ambil ulang `resultRefetchDays` hari terakhir (aman: duplikat dilewati lewat seenIds). Tanpa ini, satu run lebih awal /
+  // laga yang belum selesai saat pengambilan pertama membuat lastDate maju dan hasil hari itu hilang selamanya.
+  const refetchFrom = addDays(dateA, -Math.max(1, CFG.resultRefetchDays));
+  if (from > refetchFrom) from = refetchFrom;
   if (from < earliest) from = earliest; // tanggal lebih lama ditolak paket gratis -> jangan dicoba
   const out = { added: 0, days: 0, stoppedEarly: false };
   while (from <= last && out.days < CFG.maxResultDaysPerRun) {

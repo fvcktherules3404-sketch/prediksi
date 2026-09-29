@@ -24,6 +24,7 @@ export const CFG = {
   useApiStandings: env.USE_API_STANDINGS === 'true', // endpoint klasemen API-Football (paket gratis biasanya diblokir utk musim berjalan)
   // Paket gratis API-Football hanya boleh tanggal kemarin..besok -> lookback 1. Paket berbayar: set RESULT_LOOKBACK_DAYS=7 dst.
   resultLookbackDays: Number(env.RESULT_LOOKBACK_DAYS ?? 1),
+  resultRefetchDays: Number(env.RESULT_REFETCH_DAYS ?? 1), // ambil ulang N hari terakhir tiap run (1 request/hari; menutup laga yang belum selesai saat pengambilan sebelumnya)
   backfillDays: Number(env.BACKFILL_DAYS ?? 5),      // isi data awal: berapa hari ke belakang saat results.json masih kosong
   maxResultDaysPerRun: 7,                            // maks hari yang dikumpulkan per run (hemat kuota)
   minOwnGames: 3,                                    // tim dengan hasil sendiri < ini dianggap "tipis" -> boleh dibantu Gemini

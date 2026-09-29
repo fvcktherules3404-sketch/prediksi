@@ -6,7 +6,7 @@ import { CFG } from './config.ts';
 import { scoreMatrix, ahLine, buildPrediction, leagueAverages } from './engine.ts';
 import { computeWindow } from './run.ts';
 import { matchTeams, type Row } from './standings.ts';
-import { emptyResults, addFixture, ownRows, addDays } from './results.ts';
+import { emptyResults, addFixture, ownRows, addDays, collectResults } from './results.ts';
 import { parseFdStandings } from './footballData.ts';
 import { validateAiRow, extractJsonArray } from './geminiStandings.ts';
 
@@ -153,3 +153,13 @@ assert.equal(outcome(2, 1), '1'); assert.equal(outcome(1, 1), 'X'); assert.equal
 { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-')); fs.writeFileSync(path.join(d, 'old.json'), JSON.stringify({ ts: Date.now() - 10 * 864e5, data: 1 })); fs.writeFileSync(path.join(d, 'new.json'), JSON.stringify({ ts: Date.now(), data: 1 })); fs.writeFileSync(path.join(d, 'usage.json'), JSON.stringify({ date: 'x', used: 1 }));
   assert.equal(pruneCache(d, 4), 1); assert.deepEqual(fs.readdirSync(d).sort(), ['new.json', 'usage.json']); fs.rmSync(d, { recursive: true }); }
 console.log('v2 OK (pasar, kalibrasi, keyakinan, evaluasi)');
+// collectResults: hari terakhir selalu diambil ulang walau lastDate sudah di kemarin (laga yang tadinya belum selesai kini masuk)
+{
+  const rs3 = emptyResults(); rs3.lastDate = '2026-09-28';
+  const asked: string[] = [];
+  const fakeApi: any = { get: async (_e: string, q: any) => { asked.push(q.date); return { data: [{ ...fxr(501, 1, 2, 2, 0), league: { id: 39, season: 2026 }, fixture: { id: 501, timestamp: 1, status: { short: 'FT' } } }], source: 'live' }; } };
+  const col = await collectResults(fakeApi, rs3, '2026-09-29');
+  assert.deepEqual(asked, ['2026-09-28'], 'kemarin diambil ulang'); assert.equal(col.added, 1, 'laga baru terkumpul');
+  const col2 = await collectResults(fakeApi, rs3, '2026-09-29'); assert.equal(col2.added, 0, 'ambil ulang tidak menggandakan');
+}
+console.log('collectResults ambil-ulang OK');
