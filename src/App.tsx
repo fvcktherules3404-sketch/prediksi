@@ -91,6 +91,11 @@ function AiCard({ p }: { p: Prediction }) {
         <span className="chip" title="Pick dari rumus (Poisson/Elo/pasar), dihitung terpisah dari AI">Rumus: {p.picks.result}</span>
         <span className={`chip ${o.agree ? 'high' : 'low'}`}>{o.agree ? 'AI & rumus sepakat' : 'AI & rumus beda'}</span>
       </div>
+      <div className="chips">
+        {o.ou25 && <span className="chip" title={`Rumus: ${p.picks.goals}`}>{o.ou25 === 'over' ? 'Over 2.5' : 'Under 2.5'}</span>}
+        {o.btts && <span className="chip" title={`Rumus: BTTS ${pct(p.btts.yes)}`}>BTTS {o.btts === 'yes' ? 'Ya' : 'Tidak'}</span>}
+        {o.hdp && <span className="chip" title={`Rumus: AH adil ${fmtLine(p.fairHandicap)} (kandang)`}>HDP {o.hdp.side === '1' ? p.home.name : p.away.name} {fmtLine(o.hdp.line)}</span>}
+      </div>
       <p className="aiop"><b>Alasan:</b> {o.reason}</p>
       {o.style && <p className="aiop"><b>Pola permainan:</b> {o.style}</p>}
     </article>
@@ -99,7 +104,7 @@ function AiCard({ p }: { p: Prediction }) {
 function AiTrack({ c }: { c: Calibration }) {
   const o = c.ai.own, f = c.ai.formulaSame;
   if (!o || !o.n) return <div className="track"><b>Rekam jejak AI</b> — belum ada laga berpick AI yang selesai dinilai.</div>;
-  return <div className="track"><b>Rekam jejak AI</b> · pick AI benar {acc(o.acc)} ({o.n} laga) · rumus pada laga yang sama {acc(f?.acc)}. {o.n < 30 && <small>Sampel masih sangat kecil; jangan disimpulkan.</small>}</div>;
+  return <div className="track"><b>Rekam jejak AI</b> · pick AI benar {acc(o.acc)} ({o.n} laga) · rumus pada laga yang sama {acc(f?.acc)} · Over/Under {acc(c.ai.ou25?.acc)} ({c.ai.ou25?.n ?? 0}) · BTTS {acc(c.ai.btts?.acc)} ({c.ai.btts?.n ?? 0}) · HDP menang {acc(c.ai.hdp?.acc)} ({c.ai.hdp?.n ?? 0}, push tidak dihitung). {o.n < 30 && <small>Sampel masih sangat kecil; jangan disimpulkan.</small>}</div>;
 }
 
 export default function App() {
