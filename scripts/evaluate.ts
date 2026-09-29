@@ -29,7 +29,7 @@ const hit = (xs: boolean[]): HitStat => ({ n: xs.length, acc: xs.length ? r4(xs.
 export interface Sample {
   id: number; ts: number; home: string; away: string; pick: Out; out: Out; goals: [number, number];
   probs: Probs3; raw: Probs3; model?: Probs3; market?: Probs3;
-  conf: number; level: 'high' | 'medium' | 'low'; pOver25: number; pBtts: number; aiAgree?: boolean;
+  conf: number; level: 'high' | 'medium' | 'low'; pOver25: number; pBtts: number; aiAgree?: boolean; aiPick?: Out;
 }
 
 /** Cari nilai parameter yang meminimalkan rata-rata loss pada grid. */
@@ -43,7 +43,7 @@ export function summarize(samples: Sample[], now = new Date()): Calibration {
     return { label: hi > 100 ? `${lo}+` : `${lo}-${hi - 1}`, n: s.length, acc: hit(s.map(x => x.pick === x.out)).acc, meanConf: r4(mean(s.map(x => x.conf))) };
   });
   const lvl = (l: 'high' | 'medium' | 'low') => hit(samples.filter(x => x.level === l).map(x => x.pick === x.out));
-  const withAi = samples.filter(x => x.aiAgree !== undefined);
+  const withAi = samples.filter(x => x.aiAgree !== undefined), withAiPick = samples.filter(x => x.aiPick !== undefined);
 
   // --- ketajaman (tau) dari probabilitas mentah (sebelum temperatur) ---
   let tauRaw: number | null = null, tau = 1, note = `Menunggu ${CFG.calMinN} laga untuk menuning ketajaman (baru ${n}).`;
@@ -70,7 +70,7 @@ export function summarize(samples: Sample[], now = new Date()): Calibration {
     byLevel: { high: lvl('high'), medium: lvl('medium'), low: lvl('low') }, bins,
     ou25: hit(samples.map(s => (s.pOver25 >= 0.5) === (s.goals[0] + s.goals[1] >= 3))),
     btts: hit(samples.map(s => (s.pBtts >= 0.5) === (s.goals[0] > 0 && s.goals[1] > 0))),
-    ai: { agree: hit(withAi.filter(s => s.aiAgree).map(s => s.pick === s.out)), disagree: hit(withAi.filter(s => !s.aiAgree).map(s => s.pick === s.out)) },
+    ai: { agree: hit(withAi.filter(s => s.aiAgree).map(s => s.pick === s.out)), disagree: hit(withAi.filter(s => !s.aiAgree).map(s => s.pick === s.out)), own: hit(withAiPick.map(s => s.aiPick === s.out)), formulaSame: hit(withAiPick.map(s => s.pick === s.out)) },
     market: { n: mk.length, llModel: r4(llAt(0)), llMarket: r4(llAt(1)), llBlend: r4(llAt(marketW)), bestW: bestW === null ? null : r4(bestW) },
     tuning: { tauRaw: r4(tauRaw), tau: r4(tau)!, marketW: r4(marketW)!, note }, recent,
   };
@@ -115,7 +115,7 @@ export function loadSamples(): Sample[] {
       id: p.id, ts: p.timestamp, home: p.home.name, away: p.away.name, pick, out: outcome(sc[0], sc[1]), goals: sc,
       probs: p.probs, raw: p.rawProbs ?? p.probs, model: p.modelProbs, market: mk ? { home: mk.home, draw: mk.draw, away: mk.away } : undefined,
       conf: p.confidence, level: p.confidenceLevel, pOver25: p.ou?.[1]?.over ?? 0.5, pBtts: p.btts?.yes ?? 0.5,
-      aiAgree: p.aiOpinion ? p.aiOpinion.agree : undefined,
+      aiAgree: p.aiOpinion ? p.aiOpinion.agree : undefined, aiPick: p.aiOpinion?.pick,
     });
   }
   return out;
