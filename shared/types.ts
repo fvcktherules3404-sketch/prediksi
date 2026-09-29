@@ -1,6 +1,6 @@
 export interface Absence { name:string; pos:'GK'|'DEF'|'MID'|'FWD'|'?'; role:'key'|'starter'|'rotation'|'unknown'; status:'out'|'doubt'; reason?:string }
 export interface AHLine { line:number; win:number; halfWin:number; push:number; halfLoss:number; loss:number; pCover:number; fairOdds:number }
-export type DataSource = 'official'|'own'|'ai'|'elo';
+export type DataSource = 'official'|'own'|'ai'|'elo'|'market';
 export interface TeamInfo { id:number; name:string; logo?:string; rank?:number|null; form?:string|null; played:number; dataSource?:DataSource; elo?:number|null }
 /** Probabilitas implisit pasar (odds bandar, margin sudah dibuang). Dipakai HANYA sebagai sinyal statistik. */
 export interface MarketInfo { home:number; draw:number; away:number; over25?:number; books:number }
@@ -29,6 +29,8 @@ export interface Prediction {
   /** Prediksi utama (HDP / Over-Under / tim-seri / BTTS). Dihitung scripts/headline.ts. */
   headline?:Headline;
   slot?:Slot;
+  /** true = dibuat sesi pagi untuk laga malam/dini hari; akan dihitung ulang sesi 21:00 dengan odds & berita terbaru. */
+  preview?:boolean;
   aiSummary:string;
   aiOpinion?:{ pick:'1'|'X'|'2'; score:string|null; reason:string; style?:string; btts?:'yes'|'no'; ou25?:'over'|'under'; hdp?:{ side:'1'|'2'; line:number }; agree:boolean; confAdj:number };
   absences?:{ home:Absence[]; away:Absence[]; source:'ai'|'api'|'both'; checked:boolean; adj:{ home:number; away:number } };
@@ -51,7 +53,7 @@ export interface Metadata {
   status:'ok'|'failed'|'partial'; message:string; generatedAt?:string; attemptedAt:string; lastSuccessAt?:string;
   window?:{ start:string; end:string };
   counts?:{ fixtures:number; predicted:number; skippedNoStandings:number };
-  dataSources?:{ official:number; own:number; ai:number; elo:number; resultsCollected:number; resultsLastDate?:string|null };
+  dataSources?:{ official:number; own:number; ai:number; elo:number; market?:number; resultsCollected:number; resultsLastDate?:string|null };
   api?:{ used:number; limit:number; fixturesSource?:string };
   absences?:{ api:number; ai:number; error?:string };
   market?:{ matched:number; requested:number };
