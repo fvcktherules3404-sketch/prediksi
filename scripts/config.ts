@@ -8,7 +8,9 @@ const DEFAULT_LEAGUES = [
   // Eropa lain
   103,106,113,119,197,207,218,235,
   // Amerika, Asia, Oseania
-  11,13,72,239,242,262,265,281,99,293,169,188
+  11,13,72,239,242,262,265,281,99,293,169,188,
+  // v4.1: Afrika (kualifikasi Piala Afrika 2027 = 36, Liga Champions CAF = 12, Piala Konfederasi = 20, liga domestik) + kualifikasi Piala Dunia/Piala Emas
+  36,12,20,233,200,186,202,288,332,29,30,31,22
 ];
 export const CFG = {
   tzOffsetHours: 7,               // WIB
@@ -20,7 +22,8 @@ export const CFG = {
   requestReserve: 8,              // sisa request yang tidak boleh dipakai
   maxStandingsRequests: 60,
   fixturesTtlH: 5, standingsTtlH: 20, maxStaleH: 72,
-  allLeagues: env.ALL_LEAGUES === 'true',
+  // v4.1: default SEMUA liga (kecuali putra-junior/wanita/cadangan, lihat scripts/filter.ts). ALL_LEAGUES=false -> hanya DEFAULT_LEAGUES.
+  allLeagues: env.ALL_LEAGUES !== 'false',
   leagues: env.LEAGUE_IDS ? env.LEAGUE_IDS.split(',').map(Number).filter(Boolean) : DEFAULT_LEAGUES,
   geminiModel: env.GEMINI_MODEL ?? 'gemini-3.5-flash-lite', // jika 404, otomatis dicari lewat ListModels
   geminiBatchSize: 12, geminiMaxCalls: 8, // ringkasan AI untuk SEMUA laga (maks 96)
@@ -51,12 +54,12 @@ export const CFG = {
   rho: -0.07,               // (backtest: klub -0.04..-0.07, timnas -0.10) koreksi Dixon-Coles skor rendah
   tempoSpread: 0.2,         // ketidakpastian tempo laga (campuran 3 skenario) -> ekor gol lebih realistis
   eloOnlyPenalty: 0.85,     // (tidak dipakai lagi sejak rumus keyakinan v2; dibiarkan agar env lama tidak error)
-  nationalLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 32, 33, 34, 35, 36]), // pakai eloratings.net
+  nationalLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 22, 29, 30, 31, 32, 33, 34, 35, 36]), // pakai eloratings.net
   neutralLeagues: new Set<number>([1, 4, 6, 9]),                              // turnamen final: tanpa keunggulan kandang
-  noStandingsLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 32, 33, 34, 35, 36]), // turnamen antarnegara: lewati Gemini
+  noStandingsLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 22, 29, 30, 31, 32, 33, 34, 35, 36]), // turnamen antarnegara: lewati Gemini
 
   // --- v2: odds pasar sebagai sinyal (API-Football /odds, 1 request/laga, di-cache ringkas 6 jam) ---
-  useOdds: env.USE_ODDS !== 'false', oddsTtlH: 6, oddsMaxRequests: Number(env.ODDS_MAX_REQUESTS ?? 25) /* per sesi (2 sesi/hari berbagi kuota 100) */,
+  useOdds: env.USE_ODDS !== 'false', oddsTtlH: 6, oddsMaxRequests: Number(env.ODDS_MAX_REQUESTS ?? 30) /* per sesi (2 sesi/hari berbagi kuota 100); laga tanpa data tim tetap diprediksi dari odds bila kuota cukup */,
   marketWeight: 0.8,                 // (backtest: 0.6 -> 0.8; terbaik 1.0 pada odds penutupan, dikurangi agar aman) bobot pasar di ruang log (awal). Setelah cukup data, dituning otomatis oleh evaluate.ts
   sharpBooks: ['pinnacle'],          // bandar 'tajam' diberi bobot 3x saat merata-ratakan
   // --- v2: kalibrasi otomatis dari rekam jejak (public/data/calibration.json) ---
@@ -81,6 +84,9 @@ export const CFG = {
   aiAgreeBonus: 4, aiDisagreePenalty: 8, // opini AI sepakat/beda dengan pick (kecil; dituning manual setelah melihat calibration.json -> ai)
   friendlyLeagues: new Set<number>([10, 667]), friendlyConfFactor: 0.85, // laga persahabatan: rotasi & motivasi acak -> keyakinan dipotong
   // --- v4: prediksi utama & beranda ---
+  homeTopN: 10,                      // beranda: maks. laga keyakinan tinggi
+  homeMinShown: 5,                   // bila yang 'tinggi' kurang dari ini, beranda diisi laga terbaik berikutnya
+  marketOnlyQualityFactor: 0.8,      // laga yang HANYA berdasar odds (tanpa klasemen/Elo): kualitas data dipotong
   headlineMinP: 0.6,                 // AH/O-U/BTTS baru dipilih jadi prediksi utama bila peluangnya >= ini
   cachePruneDays: 4,                 // hapus file cache lebih tua dari ini (mencegah repo membengkak)
 };

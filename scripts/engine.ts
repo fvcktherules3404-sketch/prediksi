@@ -116,12 +116,23 @@ export function expectedGoals(homeRow: any, awayRow: any, lg: LeagueAvg) {
   return { lh, la, minGames: Math.min(H.n, A.n) };
 }
 
-export interface EloInfo { home: number; away: number; neutral?: boolean }
+export interface EloInfo { home: number; away: number; neutral?: boolean; fromMarket?: boolean }
 /** xG murni dari selisih Elo: rasio gol = exp(slope * selisih). Netral -> total gol dibagi rata; klub/kandang memakai rata-rata liga (sudah memuat keunggulan kandang). */
 export function eloExpectedGoals(e: EloInfo, lg: LeagueAvg) {
   const T = lg.home + lg.away, x = CFG.eloSlope * (e.home - e.away);
   const bh = e.neutral ? T / 2 : lg.home, ba = e.neutral ? T / 2 : lg.away;
   return { lh: clamp(bh * Math.exp(x), 0.2, 4.5), la: clamp(ba * Math.exp(-x), 0.2, 4.5) };
+}
+
+/** Laga tanpa klasemen & tanpa Elo tetapi punya odds: cari selisih \"Elo semu\" yang membuat model (Poisson) menghasilkan P(kandang)-P(tandang) sama dengan pasar.
+ *  Hasil akhirnya praktis = pasar (pasar memang satu-satunya informasi). Ditandai fromMarket agar keyakinan dipotong dan lencana \"Pasar\" tampil. */
+export function marketElo(mk: { home: number; away: number }, lg: LeagueAvg): EloInfo {
+  const target = mk.home - mk.away;
+  const diffAt = (d: number) => { const e = eloExpectedGoals({ home: 1500 + d / 2, away: 1500 - d / 2 }, lg), s = matrixStats(scoreMatrix(e.lh, e.la)); return s.ph - s.pa; };
+  let lo = -1200, hi = 1200;
+  for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (diffAt(mid) < target) lo = mid; else hi = mid; }
+  const d = (lo + hi) / 2;
+  return { home: 1500 + d / 2, away: 1500 - d / 2, neutral: false, fromMarket: true };
 }
 
 /** Dampak absen pada [kekuatan serang sendiri, kelemahan bertahan sendiri] per pemain (pecahan xG). Konservatif & dibatasi 15% per tim.
@@ -239,8 +250,9 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
   const pick = decide1x2(ph, pd, pa), maxP = Math.max(ph, pd, pa);
   // --- Keyakinan v2: ketegasan x kualitas data x kesepakatan model-pasar x jenis laga ---
   const aiData = homeRow?.source === 'ai' || awayRow?.source === 'ai';
-  let q = 0.30 + (elo ? 0.25 : 0) + 0.25 * clamp(minGames / 15, 0, 1) + (market ? 0.25 * Math.min(1, market.books / 3) : 0);
+  let q = 0.30 + (elo && !elo.fromMarket ? 0.25 : 0) + 0.25 * clamp(minGames / 15, 0, 1) + (market ? 0.25 * Math.min(1, market.books / 3) : 0);
   if (aiData) q *= 0.6; // data AI belum terverifikasi
+  if (elo?.fromMarket) q *= CFG.marketOnlyQualityFactor; // tidak ada model independen, hanya odds
   q = clamp(q, 0, 1);
   let agreement = 1;
   if (market) {
@@ -258,7 +270,7 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
   const dcs = [{ t: `${hn} / Seri`, p: ph + pd }, { t: `Seri / ${an}`, p: pd + pa }, { t: `${hn} / ${an}`, p: ph + pa - 0.12 }];
   const safe = dcs.reduce((b, x) => (x.p > b.p ? x : b));
   const o25 = ou[1];
-  const team = (t: any, row: any | null, e?: number) => ({ id: t.id, name: t.name, logo: t.logo, rank: row?.rank ?? null, form: row?.form ?? null, played: row?.all?.played ?? 0, dataSource: row ? row.source : 'elo', elo: e ? Math.round(e) : null });
+  const team = (t: any, row: any | null, e?: number) => ({ id: t.id, name: t.name, logo: t.logo, rank: row?.rank ?? null, form: row?.form ?? null, played: row?.all?.played ?? 0, dataSource: row ? row.source : elo?.fromMarket ? 'market' : 'elo', elo: e && !elo?.fromMarket ? Math.round(e) : null });
   const P3 = (a: T3): Probs3 => ({ home: r3(a[0]), draw: r3(a[1]), away: r3(a[2]) });
 
   return {

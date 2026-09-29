@@ -56,15 +56,15 @@ export function parseMarket(resp: any[]): MarketInfo | null {
 
 /** Ambil odds tiap laga (urut jam kick-off, maks CFG.oddsMaxRequests). Hasil ringkas di-cache `mkt_<id>` selama oddsTtlH.
  *  Gagal/kuota habis/tidak ada odds -> laga itu diprediksi tanpa pasar (tidak pernah dikarang). */
-export async function collectOdds(api: FootballApi, fixtures: any[]) {
-  const map = new Map<number, MarketInfo>(); let requested = 0;
+export async function collectOdds(api: FootballApi, fixtures: any[], budget = CFG.oddsMaxRequests, into = new Map<number, MarketInfo>(), keepOrder = false) {
+  const map = into; let requested = 0;
   if (!CFG.useOdds) return { map, requested };
-  const list = [...fixtures].sort((a, b) => a.fixture.timestamp - b.fixture.timestamp);
+  const list = keepOrder ? [...fixtures] : [...fixtures].sort((a, b) => a.fixture.timestamp - b.fixture.timestamp);
   for (const f of list) {
     const id = f.fixture.id as number, key = `mkt_${id}`;
     const c = readCache<MarketInfo | null>(CFG.cacheDir, key);
     if (c && (Date.now() - c.ts) / 3.6e6 <= CFG.oddsTtlH) { if (c.data) map.set(id, c.data); continue; }
-    if (requested >= CFG.oddsMaxRequests) break;
+    if (requested >= budget) break;
     requested++;
     const r = await api.get('odds', { fixture: id }, 0, false); // respons besar: jangan simpan mentah ke repo
     if (!r) continue; // gagal/kuota: jangan cache "kosong"

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { CFG } from './config.ts';
 import type { FootballApi } from './footballApi.ts';
 import type { Row } from './standings.ts';
+import { isSeniorMen } from './filter.ts';
 
 /** ===== Klasemen buatan sendiri dari hasil pertandingan (fixture berstatus selesai) =====
  * 1 request/hari (fixture kemarin). Disimpan di data/results.json dan di-commit oleh workflow. */
@@ -64,7 +65,7 @@ export async function collectResults(api: FootballApi, res: ResultsFile, dateA: 
     // Sekarang: filter status selesai + tanpa cache file (persist=false) -> selalu data segar, payload lebih kecil.
     const r = await api.get('fixtures', { date: from, timezone: 'Asia/Jakarta', status: 'FT-AET-PEN' }, 0, false);
     if (!r) { out.stoppedEarly = true; break; }
-    const fin = r.data.filter((f: any) => (CFG.allLeagues || CFG.leagues.includes(f.league.id))).sort((a: any, b: any) => a.fixture.timestamp - b.fixture.timestamp);
+    const fin = r.data.filter((f: any) => (CFG.allLeagues || CFG.leagues.includes(f.league.id)) && isSeniorMen(f)).sort((a: any, b: any) => a.fixture.timestamp - b.fixture.timestamp);
     for (const f of fin) if (addFixture(res, f)) out.added++;
     res.lastDate = from; out.days++; from = addDays(from, 1);
   }

@@ -9,7 +9,7 @@ import { formatHits, hasSearch, searchMatch } from './search.ts';
 export async function addAiSummaries(preds: Prediction[], key: string | undefined, model = CFG.geminiModel) {
   const out = { used: false, model, summarized: 0, error: undefined as string | undefined };
   if (!key) { out.error = 'GEMINI_API_KEY kosong'; return out; }
-  const pool = [...preds].sort((a, b) => a.timestamp - b.timestamp).slice(0, CFG.geminiBatchSize * CFG.geminiMaxCalls);
+  const pool = [...preds].sort((a, b) => b.confidence - a.confidence).slice(0, CFG.geminiBatchSize * CFG.geminiMaxCalls); // laga paling yakin dulu
   for (let i = 0; i < pool.length; i += CFG.geminiBatchSize) {
     const batch = pool.slice(i, i + CFG.geminiBatchSize);
     const payload = batch.map(p => ({
@@ -73,7 +73,7 @@ export async function addAiOpinions(preds: Prediction[], key: string | undefined
   const out = { done: 0, agree: 0, error: undefined as string | undefined };
   if (!key || !CFG.useAiOpinion || !hasSearch()) return out;
   const today = new Date().toISOString().slice(0, 10), todo: Prediction[] = [];
-  const pool = [...preds].sort((a, b) => a.timestamp - b.timestamp).slice(0, CFG.opinionBatchSize * CFG.opinionMaxCalls);
+  const pool = [...preds].sort((a, b) => b.confidence - a.confidence).slice(0, CFG.opinionBatchSize * CFG.opinionMaxCalls); // laga paling yakin dulu
   for (const p of pool) {
     const c = readCache<RawOpinion>(CFG.cacheDir, `ai_opinion_${p.id}`);
     if (c && (Date.now() - c.ts) / 3.6e6 <= CFG.opinionTtlH) { out.done++; if (applyOpinion(p, c.data)) out.agree++; } else todo.push(p);

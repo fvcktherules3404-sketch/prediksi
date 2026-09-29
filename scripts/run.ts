@@ -17,6 +17,8 @@ import { evaluate, activeCalibration } from './evaluate.ts';
 import { pruneCache } from './cache.ts';
 import { tableCtx, seasonPhase, type TableCtx } from './stakes.ts';
 import { pickHeadline } from './headline.ts';
+import { isSeniorMen } from './filter.ts';
+import { marketElo } from './engine.ts';
 import type { Slot } from '../shared/types.ts';
 
 const H = 3.6e6, DAY = 24 * H;
@@ -31,8 +33,13 @@ export function computeWindow(nowMs: number) {
   else { slot = 'malam'; baseWib = dayMs - DAY + malam * H; endWib = dayMs + pagi * H; dayStartWib = dayMs - DAY + pagi * H; }
   const start = baseWib - off, end = endWib - off - 1000, dayStart = dayStartWib - off;
   const dateA = new Date(baseWib).toISOString().slice(0, 10), dateB = new Date(baseWib + DAY).toISOString().slice(0, 10);
-  return { start, end, dayStart, slot, dateA, dateB, dateDay: new Date(dayStartWib).toISOString().slice(0, 10) };
+  // endAll: sesi pagi juga membuat PRATINJAU laga malam/dini hari (sampai 06:00 besok) supaya situs tidak kosong di siang hari; sesi 21:00 menghitung ulang laga itu.
+  const endAll = (dayStartWib + DAY - off) - 1000;
+  return { start, end, endAll, dayStart, slot, dateA, dateB, dateDay: new Date(dayStartWib).toISOString().slice(0, 10) };
 }
+
+/** Sesi sebuah laga menurut jam kickoff (WIB): 06:00-20:59 pagi, selebihnya malam. */
+export function slotOfTs(ts: number): Slot { const h = (new Date(ts * 1000).getUTCHours() + CFG.tzOffsetHours) % 24; return h >= CFG.slotHoursWIB.pagi && h < CFG.slotHoursWIB.malam ? 'pagi' : 'malam'; }
 
 function writeAtomic(dir: string, name: string, obj: unknown) {
   const tmp = path.join(dir, name.replace('.json', '.tmp.json')), final = path.join(dir, name);
@@ -57,7 +64,7 @@ export function buildTable(leagueId: number, pool: { official: Row[] | null; own
 
 async function main() {
   const now = Date.now(), w = computeWindow(now);
-  const win = { start: new Date(w.start).toISOString(), end: new Date(w.end).toISOString() };
+  const win = { start: new Date(w.start).toISOString(), end: new Date(w.endAll).toISOString() };
   const prevMeta = readJson<Metadata>(path.join(CFG.dataDir, 'metadata.json'));
   const fail = (message: string) => {
     console.error('::warning::' + message);
@@ -79,7 +86,7 @@ async function main() {
   const fixtures = fxRes.flatMap(r => r?.data ?? []).filter((f: any) => {
     if (seen.has(f.fixture.id)) return false; seen.add(f.fixture.id);
     const t = f.fixture.timestamp * 1000;
-    return t >= w.start && t <= w.end && f.fixture.status.short === 'NS' && (CFG.allLeagues || CFG.leagues.includes(f.league.id));
+    return t >= w.start && t <= w.endAll && f.fixture.status.short === 'NS' && (CFG.allLeagues || CFG.leagues.includes(f.league.id)) && isSeniorMen(f);
   });
   console.log(`Window ${win.start} → ${win.end}: ${fixtures.length} pertandingan`);
 
@@ -131,25 +138,37 @@ async function main() {
     avgByLeague.set(k, leagueAverages(pool ?? (own.size ? [...own.values()] : [...resolved.values()])));
   }
 
-  const preds: Prediction[] = []; let skipped = 0; const bySrc = { official: 0, own: 0, ai: 0, elo: 0 };
-  const cand: { f: any; hr: Row | null; ar: Row | null; elo: any; table: TableCtx | null }[] = [];
+  const preds: Prediction[] = []; let skipped = 0; const bySrc = { official: 0, own: 0, ai: 0, elo: 0, market: 0 };
+  const cand: { f: any; hr: Row | null; ar: Row | null; elo: any; table: TableCtx | null }[] = [], nodata: any[] = [];
   for (const f of fixtures) {
     const k = `${f.league.id}:${f.league.season}`, rows = rowsByLeague.get(k);
     const hr = rows?.get(f.teams.home.id), ar = rows?.get(f.teams.away.id), em = eloByLeague.get(k);
     const eh = em?.get(f.teams.home.id), ea = em?.get(f.teams.away.id);
     const elo = eh && ea ? { home: eh, away: ea, neutral: CFG.neutralLeagues.has(f.league.id) } : null;
-    if (!(hr && ar) && !elo) { skipped++; continue; } // tidak ada klasemen maupun Elo => jangan mengarang
+    if (!(hr && ar) && !elo) { skipped++; nodata.push(f); continue; } // tidak ada klasemen maupun Elo => hanya boleh diprediksi dari odds pasar (di bawah), tidak pernah dikarang
     cand.push({ f, hr: hr && ar ? hr : null, ar: hr && ar ? ar : null, elo, table: hr && ar ? buildTable(f.league.id, tablePool.get(k), hr, ar) : null });
   }
   // 3b) Cedera/skorsing/skuad: API-Football injuries + Gemini berita (opsional, gagal => lanjut tanpa penyesuaian)
   const abs = cand.length ? await collectAbsences(api, cand.map(c => c.f), [w.dateA, w.dateB], gKey) : { map: new Map(), nApi: 0, nAi: 0, error: undefined as string | undefined };
   // 3c) Odds pasar (sinyal statistik). Gagal/kuota habis => laga diprediksi tanpa pasar.
   const mkt = cand.length ? await collectOdds(api, cand.map(c => c.f)) : { map: new Map(), requested: 0 };
+  // 3d) Laga tanpa klasemen/Elo (mis. liga kecil, klub Afrika): bila odds pasar ada, prediksi dari odds saja (ditandai 'Pasar', keyakinan dipotong).
+  //     Liga prioritas (DEFAULT_LEAGUES) didahulukan, lalu jam kickoff; memakai sisa kuota odds.
+  if (nodata.length && CFG.useOdds) {
+    const ord = [...nodata].sort((a, b) => (+!CFG.leagues.includes(a.league.id) - +!CFG.leagues.includes(b.league.id)) || a.fixture.timestamp - b.fixture.timestamp);
+    const r2 = await collectOdds(api, ord, Math.max(0, CFG.oddsMaxRequests - mkt.requested), mkt.map, true);
+    mkt.requested += r2.requested;
+    for (const f of ord) {
+      const mk = mkt.map.get(f.fixture.id); if (!mk) continue;
+      const lg = avgByLeague.get(`${f.league.id}:${f.league.season}`)!;
+      cand.push({ f, hr: null, ar: null, elo: marketElo(mk, lg), table: null }); skipped--;
+    }
+  }
   for (const c of cand) {
-    if (c.hr && c.ar) { bySrc[c.hr.source]++; bySrc[c.ar.source]++; } else bySrc.elo += 2;
+    if (c.hr && c.ar) { bySrc[c.hr.source]++; bySrc[c.ar.source]++; } else if (c.elo?.fromMarket) bySrc.market += 2; else bySrc.elo += 2;
     preds.push(buildPrediction(c.f, c.hr, c.ar, avgByLeague.get(`${c.f.league.id}:${c.f.league.season}`)!, c.elo, abs.map.get(c.f.fixture.id), { market: mkt.map.get(c.f.fixture.id), marketW: cal.marketW, tau: cal.tau, table: c.table }));
   }
-  for (const p of preds) { p.slot = w.slot; p.headline = pickHeadline(p, CFG.headlineMinP); }
+  for (const p of preds) { p.slot = slotOfTs(p.timestamp); if (w.slot === 'pagi' && p.slot === 'malam') p.preview = true; p.headline = pickHeadline(p, CFG.headlineMinP); }
   preds.sort((a, b) => a.timestamp - b.timestamp);
 
   // 4) Gemini (opsional; gagal => tetap ada prediksi)
@@ -171,7 +190,7 @@ async function main() {
   writeAtomic(CFG.dataDir, 'predictions.json', out);
   writeAtomic(path.join(CFG.dataDir, 'history'), w.slot === 'pagi' ? `${w.dateDay}.json` : `${w.dateDay}-malam.json`, { ...out, matches: preds }); // history hanya laga sesi ini (evaluate memakai versi terbaru per laga)
   const meta: Metadata = { status: skipped && !preds.length && fixtures.length ? 'partial' : 'ok',
-    message: `${preds.length} prediksi dibuat, ${skipped} dilewati (tanpa klasemen/Elo). Sumber tim: resmi ${bySrc.official}, hasil sendiri ${bySrc.own}, AI ${bySrc.ai}, Elo-saja ${bySrc.elo}. Absen: AI ${abs.nAi} laga, API ${abs.nApi} laga. Pasar: ${mkt.map.size} laga. Kalibrasi: ${cal.n} laga dinilai, tau ${cal.tau}, bobot pasar ${cal.marketW}.`,
+    message: `${preds.length} prediksi dibuat, ${skipped} dilewati (tanpa klasemen/Elo). Sumber tim: resmi ${bySrc.official}, hasil sendiri ${bySrc.own}, AI ${bySrc.ai}, Elo-saja ${bySrc.elo}, odds-saja ${bySrc.market}. Absen: AI ${abs.nAi} laga, API ${abs.nApi} laga. Pasar: ${mkt.map.size} laga. Kalibrasi: ${cal.n} laga dinilai, tau ${cal.tau}, bobot pasar ${cal.marketW}.`,
     generatedAt: out.generatedAt, attemptedAt: out.generatedAt, window: win,
     counts: { fixtures: fixtures.length, predicted: preds.length, skippedNoStandings: skipped },
     dataSources: { ...bySrc, resultsCollected: col.added, resultsLastDate: results.lastDate },

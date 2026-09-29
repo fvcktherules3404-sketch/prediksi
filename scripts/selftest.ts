@@ -9,6 +9,8 @@ import { matchTeams, type Row } from './standings.ts';
 import { emptyResults, addFixture, ownRows, addDays, collectResults } from './results.ts';
 import { parseFdStandings } from './footballData.ts';
 import { pickHeadline } from './headline.ts';
+import { isSeniorMen } from './filter.ts';
+import { marketElo } from './engine.ts';
 import { validateAiRow, extractJsonArray } from './geminiStandings.ts';
 
 const m = scoreMatrix(1.6, 1.1);
@@ -35,6 +37,7 @@ assert.equal(w2.dateA, '2026-09-28');
   assert.equal(b.slot, 'malam'); assert.equal(b.start, Date.UTC(2026, 8, 29, 14, 0)); assert.equal(b.end, Date.UTC(2026, 8, 29, 23, 0) - 1000); assert.equal(b.dayStart, a.start); assert.equal(b.dateA, '2026-09-29');
   const c = computeWindow(Date.UTC(2026, 8, 29, 20, 0)); // 30 Sep 03:00 WIB: masih sesi malam 29 Sep
   assert.equal(c.slot, 'malam'); assert.equal(c.start, b.start); assert.equal(c.dateDay, '2026-09-29');
+  assert.equal(a.endAll, b.end, 'pagi membuat pratinjau sampai akhir sesi malam');
   assert.equal(a.end + 1000, b.start, 'sesi bersambung tanpa celah'); assert.equal(b.end + 1000, computeWindow(Date.UTC(2026, 8, 29, 23, 5)).start);
 }
 // --- v4: prediksi utama ---
@@ -52,6 +55,23 @@ assert.equal(w2.dateA, '2026-09-28');
   hl = pickHeadline(mk({ home: 0.55, draw: 0.25, away: 0.2 }, 0.5, 0.5, ahs([[-1.5, 0.15, 0, 0, 0.85], [-1, 0.42, 0, 0.16, 0.42], [-0.5, 0.55, 0, 0, 0.45], [0.5, 0.8, 0, 0, 0.2]])));
   assert.notEqual(hl.market, 'btts'); assert.ok(hl.strength > 0);
   hl = pickHeadline(mk({ home: 0.45, draw: 0.25, away: 0.3 }, 0.5, 0.5, ahs([[-0.5, 0.62, 0, 0, 0.38]]))); assert.equal(hl.market, 'hdp'); assert.equal(hl.label, 'Alpha -0.5');
+}
+// --- v4.1: filter putra senior & Elo semu dari pasar ---
+{
+  const F = (h: string, a: string, l = 'Liga') => ({ teams: { home: { name: h }, away: { name: a } }, league: { name: l } });
+  assert.equal(isSeniorMen(F('Ghana', 'Gambia', 'Africa Cup of Nations - Qualification')), true);
+  assert.equal(isSeniorMen(F('Ghana U20', 'Gambia U20')), false); assert.equal(isSeniorMen(F('Arsenal W', 'Chelsea W')), false);
+  assert.equal(isSeniorMen(F('Barcelona', 'Real Madrid', 'La Liga Women')), false); assert.equal(isSeniorMen(F('Bayern München II', 'Ulm')), false);
+  assert.equal(isSeniorMen(F('Al Ahly', 'Zamalek', 'Premier League')), true); assert.equal(isSeniorMen(F('Union Saint-Gilloise', 'Utrecht')), true);
+  const lgA = { home: 1.45, away: 1.15 };
+  for (const mk of [{ home: 0.5, draw: 0.27, away: 0.23 }, { home: 0.2, draw: 0.28, away: 0.52 }, { home: 0.36, draw: 0.3, away: 0.34 }]) {
+    const e = marketElo(mk, lgA), x = eloExpectedGoals(e, lgA), st = matrixStats(scoreMatrix(x.lh, x.la));
+    assert(Math.abs((st.ph - st.pa) - (mk.home - mk.away)) < 0.01, 'Elo semu harus mereproduksi selisih peluang pasar'); assert.equal(e.fromMarket, true);
+  }
+  const fxm = { fixture: { id: 7, timestamp: 1e9 }, league: { id: 999, name: 'X', season: 2026 }, teams: { home: { id: 1, name: 'A' }, away: { id: 2, name: 'B' } } };
+  const mkt = { home: 0.55, draw: 0.25, away: 0.2, books: 3 }, pm = buildPrediction(fxm, null, null, lgA, marketElo(mkt, lgA), null, { market: mkt, marketW: 0.8 });
+  assert.equal(pm.home.dataSource, 'market'); assert(Math.abs(pm.probs.home - 0.55) < 0.03, 'prediksi odds-saja mengikuti pasar');
+  const pe = buildPrediction(fxm, null, null, lgA, { home: 1600, away: 1500 }, null, { market: mkt, marketW: 0.8 }); assert(pm.confidence <= pe.confidence, 'odds-saja tidak boleh lebih yakin dari Elo asli');
 }
 // --- pencocokan nama (ID API-Football != ID football-data.org) ---
 const R = (id: number, name: string, names: string[] = []): Row => ({ team: { id, name }, names, all: { played: 1, goals: { for: 1, against: 1 } }, home: { played: 1, goals: { for: 1, against: 1 } }, away: { played: 0, goals: { for: 0, against: 0 } }, source: 'official' });
