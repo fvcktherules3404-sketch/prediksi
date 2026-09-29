@@ -2,6 +2,7 @@ import { CFG } from './config.ts';
 import { geminiGenerate } from './geminiCall.ts';
 import { readCache, writeCache } from './cache.ts';
 import { tokens, type Row } from './standings.ts';
+import { formatHits, hasSearch, webSearch } from './search.ts';
 
 const int = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : null);
 
@@ -20,26 +21,28 @@ export function validateAiRow(x: any, ownPlayed = 0): Omit<Row, 'team'> | null {
 }
 
 const median = (a: number[]) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
-/** Ekstrak array JSON dari teks bebas (dengan grounding, mode JSON murni tidak didukung). */
+/** Ekstrak array JSON dari teks bebas (tahan terhadap teks pembuka/penutup di sekitar array). */
 export function extractJsonArray(text: string): any[] { const i = text.indexOf('['), j = text.lastIndexOf(']'); if (i < 0 || j <= i) return []; try { const a = JSON.parse(text.slice(i, j + 1)); return Array.isArray(a) ? a : []; } catch { return []; } }
 
-/** Gemini + Google Search grounding mencari klasemen tim yang belum punya data. Hasil hanya dipakai jika:
- *  (1) respons benar-benar ter-grounding (ada sumber web), (2) lolos validasi angka, (3) jumlah laga tidak menyimpang dari tim lain.
+/** Klasemen tim yang belum punya data: pencarian web (Tavily) -> teks halaman ditempel ke Gemini sebagai SUMBER -> Gemini mengekstrak angka.
+ *  Hasil hanya dipakai jika:
+ *  (1) pencarian benar-benar mengembalikan sumber web, (2) lolos validasi angka, (3) jumlah laga tidak menyimpang dari tim lain.
  *  Semua baris diberi source='ai' (ditandai "belum terverifikasi" di UI, keyakinan diturunkan). */
 export async function aiStandings(key: string, lg: { id: number; name: string; country?: string; season: number }, teams: { id: number; name: string }[], own: Map<number, Row>, model = CFG.geminiModel): Promise<Map<number, Row>> {
   const out = new Map<number, Row>(); const today = new Date().toISOString().slice(0, 10);
+  if (!hasSearch()) return out;
   const ck = `ai_standings_${lg.id}_${lg.season}_${teams.map(t => t.id).sort((a, b) => a - b).join('-')}`;
   const c = readCache<Row[]>(CFG.cacheDir, ck);
   if (c && (Date.now() - c.ts) / 3.6e6 <= CFG.standingsTtlH) { for (const r of c.data) out.set(r.team.id, r); return out; }
-  const prompt = `Hari ini ${today}. Cari klasemen ${lg.name}${lg.country ? ` (${lg.country})` : ''} musim ${lg.season} yang sedang berjalan di web, lalu berikan statistik HANYA untuk tim berikut: ${teams.map(t => t.name).join('; ')}.\n` +
-    `Untuk tiap tim: laga/gol kandang dan tandang terpisah (home & away: played, gf = gol memasukkan, ga = gol kebobolan), form 5 laga terakhir (huruf W/D/L, terbaru di akhir), peringkat.\n` +
-    `ATURAN: hanya angka yang benar-benar tertulis di sumber; JANGAN menebak atau menghitung dari ingatan. Jika sebuah tim tidak ditemukan atau angkanya tidak jelas, OMIT tim itu. Salin nama tim persis seperti di daftar. ` +
-    `Balas HANYA JSON array: [{"team":string,"rank":number|null,"form":string|null,"home":{"played":number,"gf":number,"ga":number},"away":{"played":number,"gf":number,"ga":number}}]`;
   try {
-    const { json: j } = await geminiGenerate(key, { contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }], generationConfig: { temperature: 0 } }, model);
-    const cand = j.candidates?.[0];
-    if (!cand?.groundingMetadata?.groundingChunks?.length) throw new Error('tanpa grounding (tidak ada sumber web) -> dibuang');
-    const text = (cand.content?.parts ?? []).map((p: any) => p.text ?? '').join('');
+    const hits = await webSearch(`${lg.name} ${lg.country ?? ''} ${lg.season} league table standings home away form`.replace(/\s+/g, ' ').trim(), { max: 3, raw: true });
+    if (!hits.length) throw new Error('pencarian tanpa sumber web -> dibuang');
+    const prompt = `Hari ini ${today}. Dari SUMBER web di bawah, ambil klasemen ${lg.name}${lg.country ? ` (${lg.country})` : ''} musim ${lg.season} yang sedang berjalan, lalu berikan statistik HANYA untuk tim berikut: ${teams.map(t => t.name).join('; ')}.\n` +
+      `Untuk tiap tim: laga/gol kandang dan tandang terpisah (home & away: played, gf = gol memasukkan, ga = gol kebobolan), form 5 laga terakhir (huruf W/D/L, terbaru di akhir), peringkat.\n` +
+      `ATURAN: hanya angka yang benar-benar tertulis di SUMBER; JANGAN menebak atau menghitung dari ingatan. Jika sebuah tim tidak ditemukan atau angkanya tidak jelas (misalnya tabel hanya total tanpa pemisahan kandang/tandang), OMIT tim itu. Salin nama tim persis seperti di daftar. ` +
+      `Balas HANYA JSON array: [{\"team\":string,\"rank\":number|null,\"form\":string|null,\"home\":{\"played\":number,\"gf\":number,\"ga\":number},\"away\":{\"played\":number,\"gf\":number,\"ga\":number}}]\n\nSUMBER:\n${formatHits(hits, 5000)}`;
+    const { json: j } = await geminiGenerate(key, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0 } }, model);
+    const text = (j.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? '').join('');
     const good: { team: { id: number; name: string }; r: Omit<Row, 'team'> }[] = [];
     for (const it of extractJsonArray(text)) {
       const t = teams.find(x => tokens(x.name).join(' ') === tokens(String(it?.team ?? '')).join(' ')); if (!t) continue;
