@@ -47,6 +47,7 @@ function Card({ p }: { p: Prediction }) {
       <div className="chips">
         <span className={`chip ${p.confidenceLevel}`}>Keyakinan {p.confidence}</span>
         <span className="chip">Pick: {p.picks.result}</span>
+        {Math.abs(h - a) < 0.05 && <span className="chip tight" title="Kedua tim nyaris setara; seri sangat mungkin. Pick tetap satu hasil dengan peluang tertinggi.">⚖️ Ketat · Seri {pct(d)}</span>}
         {p.picks.safe && <span className="chip">Aman: {p.picks.safe}</span>}
         <span className="chip">{p.picks.goals} ({pct(p.picks.goals === 'Over 2.5' ? p.ou[1].over : p.ou[1].under)})</span>
         {p.market && <span className="chip" title={`Peluang implisit pasar (margin dibuang, ${p.market.books} bandar) ikut dihitung`}>Pasar {pct(p.market.home)}/{pct(p.market.draw)}/{pct(p.market.away)}</span>}
