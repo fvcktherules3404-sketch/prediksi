@@ -29,13 +29,19 @@ const hit = (xs: boolean[]): HitStat => ({ n: xs.length, acc: xs.length ? r4(xs.
 export interface Sample {
   id: number; ts: number; home: string; away: string; pick: Out; out: Out; goals: [number, number];
   probs: Probs3; raw: Probs3; model?: Probs3; market?: Probs3;
-  conf: number; level: 'high' | 'medium' | 'low'; pOver25: number; pBtts: number; aiAgree?: boolean; aiPick?: Out;
+  conf: number; level: 'high' | 'medium' | 'low'; pOver25: number; pBtts: number; aiAgree?: boolean; aiPick?: Out; aiBtts?: 'yes' | 'no'; aiOu?: 'over' | 'under'; aiHdp?: { side: '1' | '2'; line: number };
 }
 
 /** Cari nilai parameter yang meminimalkan rata-rata loss pada grid. */
 function argmin(grid: number[], f: (x: number) => number): number { let bx = grid[0], bv = Infinity; for (const x of grid) { const v = f(x); if (v < bv) { bv = v; bx = x; } } return bx; }
 const range = (a: number, b: number, s: number) => { const o: number[] = []; for (let x = a; x <= b + 1e-9; x += s) o.push(Math.round(x * 1e4) / 1e4); return o; };
 
+/** Hasil handicap Asia untuk sisi terpilih: 1 menang (penuh/setengah), -1 kalah (penuh/setengah), 0 push. d = gol sisi itu - gol lawan. */
+export function ahResult(d: number, line: number): 1 | 0 | -1 {
+  const quarter = Math.abs(line * 4) % 2 === 1, comps = quarter ? [line - 0.25, line + 0.25] : [line];
+  const m = comps.reduce((a, c) => a + (d + c > 1e-9 ? 1 : d + c < -1e-9 ? -1 : 0), 0) / comps.length;
+  return m > 0 ? 1 : m < 0 ? -1 : 0;
+}
 export function summarize(samples: Sample[], now = new Date()): Calibration {
   const n = samples.length;
   const bins = [[0, 20], [20, 40], [40, 60], [60, 101]].map(([lo, hi]) => {
@@ -70,7 +76,10 @@ export function summarize(samples: Sample[], now = new Date()): Calibration {
     byLevel: { high: lvl('high'), medium: lvl('medium'), low: lvl('low') }, bins,
     ou25: hit(samples.map(s => (s.pOver25 >= 0.5) === (s.goals[0] + s.goals[1] >= 3))),
     btts: hit(samples.map(s => (s.pBtts >= 0.5) === (s.goals[0] > 0 && s.goals[1] > 0))),
-    ai: { agree: hit(withAi.filter(s => s.aiAgree).map(s => s.pick === s.out)), disagree: hit(withAi.filter(s => !s.aiAgree).map(s => s.pick === s.out)), own: hit(withAiPick.map(s => s.aiPick === s.out)), formulaSame: hit(withAiPick.map(s => s.pick === s.out)) },
+    ai: { agree: hit(withAi.filter(s => s.aiAgree).map(s => s.pick === s.out)), disagree: hit(withAi.filter(s => !s.aiAgree).map(s => s.pick === s.out)), own: hit(withAiPick.map(s => s.aiPick === s.out)), formulaSame: hit(withAiPick.map(s => s.pick === s.out)),
+      ou25: hit(samples.filter(s => s.aiOu).map(s => (s.aiOu === 'over') === (s.goals[0] + s.goals[1] >= 3))),
+      btts: hit(samples.filter(s => s.aiBtts).map(s => (s.aiBtts === 'yes') === (s.goals[0] > 0 && s.goals[1] > 0))),
+      hdp: hit(samples.filter(s => s.aiHdp).map(s => ahResult(s.aiHdp!.side === '1' ? s.goals[0] - s.goals[1] : s.goals[1] - s.goals[0], s.aiHdp!.line)).filter(r => r !== 0).map(r => r === 1)) },
     market: { n: mk.length, llModel: r4(llAt(0)), llMarket: r4(llAt(1)), llBlend: r4(llAt(marketW)), bestW: bestW === null ? null : r4(bestW) },
     tuning: { tauRaw: r4(tauRaw), tau: r4(tau)!, marketW: r4(marketW)!, note }, recent,
   };
@@ -115,7 +124,7 @@ export function loadSamples(): Sample[] {
       id: p.id, ts: p.timestamp, home: p.home.name, away: p.away.name, pick, out: outcome(sc[0], sc[1]), goals: sc,
       probs: p.probs, raw: p.rawProbs ?? p.probs, model: p.modelProbs, market: mk ? { home: mk.home, draw: mk.draw, away: mk.away } : undefined,
       conf: p.confidence, level: p.confidenceLevel, pOver25: p.ou?.[1]?.over ?? 0.5, pBtts: p.btts?.yes ?? 0.5,
-      aiAgree: p.aiOpinion ? p.aiOpinion.agree : undefined, aiPick: p.aiOpinion?.pick,
+      aiAgree: p.aiOpinion ? p.aiOpinion.agree : undefined, aiPick: p.aiOpinion?.pick, aiBtts: p.aiOpinion?.btts, aiOu: p.aiOpinion?.ou25, aiHdp: p.aiOpinion?.hdp,
     });
   }
   return out;
