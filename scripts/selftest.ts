@@ -67,8 +67,8 @@ assert(pb.xg.home < p.xg.home, 'Elo lawan menurunkan xG bila blend');
 assert.throws(() => buildPrediction(fx, null, null, lg));
 // --- seri & kalibrasi ---
 import { decide1x2 } from './engine.ts';
-assert.equal(decide1x2(0.36, 0.28, 0.36), 'X', 'laga seimbang -> Seri'); assert.equal(decide1x2(0.28, 0.28, 0.44), '2'); assert.equal(decide1x2(0.55, 0.25, 0.2), '1');
-const bal = buildPrediction(fx, null, null, lg, { home: 1800, away: 1800, neutral: true }); assert.equal(bal.picks.pick1x2, 'X', 'Elo setara -> pick Seri');
+assert.equal(decide1x2(0.36, 0.28, 0.36), 'X', 'laga kembar & seri >= 28% -> Seri'); assert.equal(decide1x2(0.37, 0.26, 0.37), '1', 'kembar tapi seri < 28% -> tetap pilih tim'); assert.equal(decide1x2(0.40, 0.29, 0.31), '1', 'selisih >= 3 poin -> pilih tim'); assert.equal(decide1x2(0.30, 0.40, 0.30), 'X'); assert.equal(decide1x2(0.28, 0.28, 0.44), '2'); assert.equal(decide1x2(0.55, 0.25, 0.2), '1');
+const bal = buildPrediction(fx, null, null, lg, { home: 1800, away: 1800, neutral: true }); assert.ok(Math.abs(bal.probs.home - bal.probs.away) < 1e-6, 'Elo setara & netral -> peluang kandang = tandang'); assert.ok(bal.probs.draw > 0.2 && bal.probs.draw < 0.35, 'peluang seri tetap ditampilkan'); assert.equal(bal.picks.pick1x2, (bal.probs.draw > bal.probs.home || bal.probs.draw >= 0.28) ? 'X' : '1', 'Elo setara: Seri hanya bila seri >= 28% atau tertinggi');
 const dm = scoreMatrix(1.3, 1.3); const dr = dm.reduce((a, r, i) => a + r[i], 0); assert(dr > 0.26 && dr < 0.36, 'peluang seri wajar: ' + dr);
 // --- absen ---
 import { absenceImpact } from './engine.ts'; import { validateAbsence, mergeAbsences } from './news.ts';
