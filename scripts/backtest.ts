@@ -18,7 +18,7 @@ import { devig } from './odds.ts';
 type T3 = [number, number, number];
 const args = Object.fromEntries(process.argv.slice(2).filter(a => a.startsWith('--')).map(a => { const [k, v] = a.slice(2).split('='); return [k, v ?? 'true']; }));
 const DIR = String(args.dir ?? 'data/backtest'), WARMUP = Number(args.warmup ?? 20), SPLIT = Number(args.split ?? 0.7), CLOSING = args.closing === 'true';
-const REPORT = String(args.out ?? 'data/backtest-report.json');
+const REPORT = String(args.out ?? 'data/backtest-report.json'), FROM = Number(args.from ?? 0);
 
 // ---------------------------------------------------------------- CSV
 function splitLine(line: string): string[] {
@@ -39,12 +39,15 @@ const ODDS_PRE = [['PSH', 'PSD', 'PSA'], ['B365H', 'B365D', 'B365A'], ['AvgH', '
 const ODDS_CLOSE = [['PSCH', 'PSCD', 'PSCA'], ['AvgCH', 'AvgCD', 'AvgCA'], ['B365CH', 'B365CD', 'B365CA']];
 const OU_PRE = [['P>2.5', 'P<2.5'], ['Avg>2.5', 'Avg<2.5'], ['B365>2.5', 'B365<2.5']], OU_CLOSE = [['PC>2.5', 'PC<2.5'], ['AvgC>2.5', 'AvgC<2.5']];
 
-interface Match { t: number; leagueKey: string; group: string; home: string; away: string; hg: number; ag: number; mkt?: T3; mktO25?: number }
+interface Match { t: number; leagueKey: string; group: string; home: string; away: string; hg: number; ag: number; mkt?: T3; mktO25?: number; intl?: boolean; neutral?: boolean; kBase?: number }
+/** Bobot K Elo tim nasional menurut jenis turnamen (mengikuti pola eloratings.net). */
+const intlK = (t: string) => { const x = t.toLowerCase(); return x.includes('friendly') ? 20 : x.includes('qualif') ? 40 : x.includes('world cup') ? 60 : /nations league|euro|copa am|african cup|asian cup|gold cup|confederations/.test(x) ? 50 : 30; };
 export function loadCsv(file: string): Match[] {
   const txt = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
   if (txt.length < 2) return [];
   const head = splitLine(txt[0]), idx = (...names: string[]) => { for (const n of names) { const i = head.indexOf(n); if (i >= 0) return i; } return -1; };
-  const iD = idx('Date'), iH = idx('HomeTeam', 'Home'), iA = idx('AwayTeam', 'Away'), iHG = idx('FTHG', 'HG'), iAG = idx('FTAG', 'AG'), iLg = idx('League'), iSe = idx('Season'), iDiv = idx('Div');
+  const iD = idx('Date', 'date'), iH = idx('HomeTeam', 'Home', 'home_team'), iA = idx('AwayTeam', 'Away', 'away_team'), iHG = idx('FTHG', 'HG', 'home_score'), iAG = idx('FTAG', 'AG', 'away_score'), iLg = idx('League'), iSe = idx('Season'), iDiv = idx('Div');
+  const iNeu = idx('neutral'), iTour = idx('tournament'), intl = head.includes('home_team') && iTour >= 0; // format martj42/international_results (tim nasional)
   if ([iD, iH, iA, iHG, iAG].some(i => i < 0)) { console.warn(`[lewati] ${path.basename(file)}: kolom Date/HomeTeam/AwayTeam/FTHG/FTAG tidak lengkap`); return []; }
   const base = path.basename(file).replace(/\.csv$/i, ''), nm = /^(.+?)[-_ ](\d.*)$/.exec(base);
   const fileLeague = nm ? nm[1] : base, fileSeason = nm ? nm[2] : '';
@@ -54,6 +57,8 @@ export function loadCsv(file: string): Match[] {
   for (const line of txt.slice(1)) {
     const c = splitLine(line), t = parseDate(c[iD] ?? ''), hg = num(c[iHG]), ag = num(c[iAG]);
     if (t === null || !c[iH] || !c[iA] || !Number.isFinite(hg) || !Number.isFinite(ag)) continue;
+    if (FROM && new Date(t).getUTCFullYear() < FROM) continue;
+    if (intl) { out.push({ t, leagueKey: 'INTL', group: `INTL|${new Date(t).getUTCFullYear()}`, home: c[iH], away: c[iA], hg, ag, intl: true, neutral: /^true$/i.test(c[iNeu] ?? ''), kBase: intlK(c[iTour] ?? '') }); continue; }
     const leagueKey = iLg >= 0 ? c[iLg] : iDiv >= 0 && c[iDiv] ? c[iDiv] : fileLeague, season = iSe >= 0 ? c[iSe] : fileSeason;
     const m: Match = { t, leagueKey, group: `${leagueKey}|${season}`, home: c[iH], away: c[iA], hg, ag };
     for (const ix of oddsSets) { const p = devig(ix.map(i => num(c[i]))); if (p) { m.mkt = [p[0], p[1], p[2]]; break; } }
@@ -64,7 +69,7 @@ export function loadCsv(file: string): Match[] {
 }
 
 // ---------------------------------------------------------------- Walk-forward: statistik klasemen + Elo
-interface Rec { t: number; out: 0 | 1 | 2; hg: number; ag: number; n: number; lg: { home: number; away: number }; xS: [number, number]; xN: [number, number]; ed: number; mkt?: T3; mktO25?: number }
+interface Rec { t: number; neutral: boolean; out: 0 | 1 | 2; hg: number; ag: number; n: number; lg: { home: number; away: number }; xS: [number, number]; xN: [number, number]; ed: number; mkt?: T3; mktO25?: number }
 interface TeamS { p: number; gf: number; ga: number; hp: number; hgf: number; hga: number; ap: number; agf: number; aga: number; form: string }
 const blank = (): TeamS => ({ p: 0, gf: 0, ga: 0, hp: 0, hgf: 0, hga: 0, ap: 0, agf: 0, aga: 0, form: '' });
 const toRow = (s: TeamS, noForm = false) => ({ form: noForm ? '' : s.form, all: { played: s.p, goals: { for: s.gf, against: s.ga } }, home: { played: s.hp, goals: { for: s.hgf, against: s.hga } }, away: { played: s.ap, goals: { for: s.agf, against: s.aga } } });
@@ -78,7 +83,7 @@ export function walkForward(matches: Match[], warmup: number): Rec[] {
     let j = i; while (j < ms.length && ms[j].t === ms[i].t) j++;
     const day = ms.slice(i, j); i = j;
     for (const m of day) { // awal musim baru: tarik Elo tim liga itu 25% ke 1500
-      if (!seenGroup.has(m.group)) { seenGroup.add(m.group); for (const [k, v] of elo) if (k.startsWith(m.leagueKey + '|')) elo.set(k, 1500 + 0.75 * (v - 1500)); }
+      if (!seenGroup.has(m.group)) { seenGroup.add(m.group); if (!m.intl) for (const [k, v] of elo) if (k.startsWith(m.leagueKey + '|')) elo.set(k, 1500 + 0.75 * (v - 1500)); }
     }
     // 1) prediksi semua laga hari itu dari data SEBELUM hari itu
     for (const m of day) {
@@ -88,7 +93,7 @@ export function walkForward(matches: Match[], warmup: number): Rec[] {
       const kH = `${m.leagueKey}|${m.home}`, kA = `${m.leagueKey}|${m.away}`, eh = elo.get(kH) ?? 1500, ea = elo.get(kA) ?? 1500;
       if (Math.min(cnt.get(kH) ?? 0, cnt.get(kA) ?? 0) >= warmup) {
         const s = expectedGoals(toRow(H), toRow(A), lg), s0 = expectedGoals(toRow(H, true), toRow(A, true), lg);
-        recs.push({ t: m.t, out: m.hg > m.ag ? 0 : m.hg === m.ag ? 1 : 2, hg: m.hg, ag: m.ag, n: s.minGames, lg, xS: [s.lh, s.la], xN: [s0.lh, s0.la], ed: eh - ea, mkt: m.mkt, mktO25: m.mktO25 });
+        recs.push({ t: m.t, neutral: !!m.neutral, out: m.hg > m.ag ? 0 : m.hg === m.ag ? 1 : 2, hg: m.hg, ag: m.ag, n: s.minGames, lg, xS: [s.lh, s.la], xN: [s0.lh, s0.la], ed: eh - ea, mkt: m.mkt, mktO25: m.mktO25 });
       }
     }
     // 2) baru sesudah itu perbarui statistik dan Elo
@@ -99,8 +104,8 @@ export function walkForward(matches: Match[], warmup: number): Rec[] {
       A.p++; A.gf += m.ag; A.ga += m.hg; A.ap++; A.agf += m.ag; A.aga += m.hg; A.form = (A.form + (m.ag > m.hg ? 'W' : m.hg === m.ag ? 'D' : 'L')).slice(-5);
       const T = tot.get(m.group) ?? { hg: 0, hp: 0, ag: 0, ap: 0 }; T.hg += m.hg; T.hp++; T.ag += m.ag; T.ap++; tot.set(m.group, T);
       const kH = `${m.leagueKey}|${m.home}`, kA = `${m.leagueKey}|${m.away}`, eh = elo.get(kH) ?? 1500, ea = elo.get(kA) ?? 1500;
-      const exp = 1 / (1 + Math.pow(10, -(eh - ea + HA) / 400)), S = m.hg > m.ag ? 1 : m.hg === m.ag ? 0.5 : 0, gd = Math.abs(m.hg - m.ag);
-      const K = 20 * (gd <= 1 ? 1 : gd === 2 ? 1.5 : (11 + gd) / 8), d = K * (S - exp);
+      const ha = m.intl ? (m.neutral ? 0 : 100) : HA, exp = 1 / (1 + Math.pow(10, -(eh - ea + ha) / 400)), S = m.hg > m.ag ? 1 : m.hg === m.ag ? 0.5 : 0, gd = Math.abs(m.hg - m.ag);
+      const K = (m.kBase ?? 20) * (gd <= 1 ? 1 : gd === 2 ? 1.5 : (11 + gd) / 8), d = K * (S - exp);
       elo.set(kH, eh + d); elo.set(kA, ea - d); cnt.set(kH, (cnt.get(kH) ?? 0) + 1); cnt.set(kA, (cnt.get(kA) ?? 0) + 1);
     }
   }
@@ -115,7 +120,7 @@ const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
 function xgOf(r: Rec, p: Par): [number, number] {
   const s = p.useForm ? r.xS : r.xN;
   if (p.mode === 'std') return s;
-  const old = CFG.eloSlope; CFG.eloSlope = p.slope; const e = eloExpectedGoals({ home: r.ed, away: 0 }, r.lg); CFG.eloSlope = old;
+  const old = CFG.eloSlope; CFG.eloSlope = p.slope; const e = eloExpectedGoals({ home: r.ed, away: 0, neutral: r.neutral }, r.lg); CFG.eloSlope = old;
   if (p.mode === 'elo') return [e.lh, e.la];
   const w = r.n / (r.n + p.K);
   return [Math.exp(w * Math.log(s[0]) + (1 - w) * Math.log(e.lh)), Math.exp(w * Math.log(s[1]) + (1 - w) * Math.log(e.la))];
@@ -245,7 +250,7 @@ export function runBacktest(matches: Match[]) {
   if (!sig) console.log(`Tuning belum memberi perbaikan yang nyata di set uji (selisih ${gain.toFixed(4)}). Biarkan parameter default, jangan mengubah karena "kelihatannya lebih baik".`);
   else console.log(`Tuning memperbaiki log-loss uji sebesar ${gain.toFixed(4)} (nyata secara statistik). Nilai yang disarankan:`);
   console.log(`  eloSlope: ${bestE.s},  eloShrinkK: ${bestE.k},  rho: ${bestS.rho},  drawBoost: ${bestS.draw},  tempoSpread: ${bestS.spread}` + (rep.market ? `,  marketWeight: ${rep.market.marketW}` : ''));
-  console.log('Catatan: Elo di sini dihitung dari hasil liga yang sama (bukan ClubElo/eloratings.net), jadi eloSlope hanya pendekatan. Untuk tim nasional, backtest terpisah dengan data internasional.');
+  console.log('Catatan: Elo di sini dihitung dari hasil di data itu sendiri (bukan ClubElo/eloratings.net), jadi eloSlope hanya pendekatan. Jalankan klub dan tim nasional di folder terpisah (--dir=...), karena parameter idealnya bisa berbeda.');
   rep.recommend = { eloSlope: bestE.s, eloShrinkK: bestE.k, rho: bestS.rho, drawBoost: bestS.draw, tempoSpread: bestS.spread, significant: sig, gain, ...(rep.market ?? {}) };
   return rep;
 }
