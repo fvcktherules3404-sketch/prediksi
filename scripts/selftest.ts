@@ -86,6 +86,15 @@ console.log('OK', JSON.stringify({ xg: p.xg, probs: p.probs, fair: p.fairHandica
 import { validateOpinion, applyOpinion, modelPick } from './gemini.ts';
 assert.deepEqual(validateOpinion({ pick: 'x', score: '1-1', reason: ' seimbang ' }), { pick: 'X', score: '1-1', reason: 'seimbang' });
 assert.equal(validateOpinion({ pick: '1', score: '0-2', reason: 'a' })!.score, null, 'skor bertentangan dengan pick dibuang');
+{ const v = validateOpinion({ pick: '1', score: '2-1', reason: 'a', btts: 'yes', ou25: 'over', hdp: { side: '1', line: -0.75 } })!;
+  assert.equal(v.score, '2-1'); assert.equal(v.btts, 'yes'); assert.equal(v.ou25, 'over'); assert.deepEqual(v.hdp, { side: '1', line: -0.75 });
+  assert.equal(validateOpinion({ pick: '1', score: '1-0', reason: 'a', btts: 'yes' })!.score, null, 'skor bertentangan dengan BTTS dibuang');
+  assert.equal(validateOpinion({ pick: '1', score: '3-0', reason: 'a', ou25: 'under' })!.score, null, 'skor bertentangan dengan Over/Under dibuang');
+  assert.equal(validateOpinion({ pick: '1', reason: 'a', hdp: { side: '1', line: -0.6 } })!.hdp, undefined, 'garis bukan kelipatan 0,25 dibuang');
+  assert.equal(validateOpinion({ pick: '1', reason: 'a', hdp: { side: '3', line: 0 } })!.hdp, undefined); }
+import { ahResult } from './evaluate.ts';
+assert.equal(ahResult(1, -0.5), 1); assert.equal(ahResult(0, -0.5), -1); assert.equal(ahResult(1, -1), 0); assert.equal(ahResult(1, -0.75), 1, 'AH -0.75 menang 1 gol = menang setengah');
+assert.equal(ahResult(0, -0.25), -1, 'AH -0.25 seri = kalah setengah'); assert.equal(ahResult(0, 0.25), 1, 'AH +0.25 seri = menang setengah'); assert.equal(ahResult(2, -1.5), 1); assert.equal(ahResult(-1, 0), -1);
 assert.equal(validateOpinion({ pick: '3', reason: 'a' }), null); assert.equal(validateOpinion({ pick: '1', reason: '' }), null);
 { const q: any = JSON.parse(JSON.stringify(pe)), c0 = q.confidence, pk = modelPick(q);
   assert.equal(applyOpinion(q, { pick: pk, score: null, reason: 'r' }), true); assert.equal(q.confidence, Math.min(100, c0 + CFG.aiAgreeBonus));
