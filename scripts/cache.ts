@@ -8,3 +8,19 @@ export function writeCache(dir: string, key: string, data: unknown) {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(fileOf(dir, key), JSON.stringify({ ts: Date.now(), data }));
 }
+
+/** Hapus file cache berumur > maxDays (berdasarkan field `ts` di dalam JSON, bukan mtime karena checkout git mengubah mtime). File tanpa `ts` (mis. usage.json) dibiarkan. */
+export function pruneCache(dir: string, maxDays: number): number {
+  let removed = 0;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.json')) continue;
+      const file = path.join(dir, f);
+      try {
+        const o = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (typeof o?.ts === 'number' && (Date.now() - o.ts) / 864e5 > maxDays) { fs.unlinkSync(file); removed++; }
+      } catch { /* file rusak/bukan cache: biarkan */ }
+    }
+  } catch { /* folder belum ada */ }
+  return removed;
+}

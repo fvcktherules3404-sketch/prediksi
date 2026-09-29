@@ -12,6 +12,9 @@ import { collectAbsences } from './news.ts';
 import { aiStandings } from './geminiStandings.ts';
 import { matchTeams, type Row } from './standings.ts';
 import { fetchClubElo, fetchNationalElo, matchElo, clubCountry, clubEloCovered } from './elo.ts';
+import { collectOdds } from './odds.ts';
+import { evaluate, activeCalibration } from './evaluate.ts';
+import { pruneCache } from './cache.ts';
 
 const H = 3.6e6, DAY = 24 * H;
 /** Window berdasarkan waktu eksekusi AKTUAL (cron GitHub boleh telat): batas 06:00 WIB terakhir <= sekarang. */
@@ -41,6 +44,7 @@ async function main() {
     writeAtomic(CFG.dataDir, 'metadata.json', { status: 'failed', message, attemptedAt: new Date(now).toISOString(), lastSuccessAt: prevMeta?.generatedAt ?? prevMeta?.lastSuccessAt, window: win } as Metadata);
   };
 
+  try { const n = pruneCache(CFG.cacheDir, CFG.cachePruneDays); if (n) console.log(`[cache] ${n} file lama dihapus`); } catch {}
   const key = process.env.FOOTBALL_API_KEY;
   if (!key) return fail('FOOTBALL_API_KEY belum diisi di GitHub Secrets.');
   const usage = new ApiUsage(path.join(CFG.cacheDir, 'usage.json'), CFG.dailyRequestLimit, CFG.requestReserve);
@@ -63,6 +67,9 @@ async function main() {
   const col = await collectResults(api, results, w.dateA);
   if (results.lastDate !== lastBefore || col.added) saveResults(CFG.resultsFile, results);
   console.log(`Hasil: +${col.added} laga dari ${col.days} hari (terakhir ${results.lastDate ?? '-'})${col.stoppedEarly ? ' [berhenti: API menolak/gagal]' : ''}`);
+  // 2b) Rekam jejak: nilai prediksi lama vs hasil sebenarnya, tuning otomatis tau & bobot pasar (public/data/calibration.json)
+  try { evaluate(); } catch (e) { console.warn('[evaluasi] gagal:', (e as Error).message); }
+  const cal = activeCalibration();
 
   // 3) Tentukan baris klasemen tiap tim. Prioritas: resmi (football-data.org / API-Football) > hasil sendiri > Gemini (tervalidasi, ditandai)
   const groups = new Map<string, any[]>();
@@ -113,9 +120,11 @@ async function main() {
   }
   // 3b) Cedera/skorsing/skuad: API-Football injuries + Gemini berita (opsional, gagal => lanjut tanpa penyesuaian)
   const abs = cand.length ? await collectAbsences(api, cand.map(c => c.f), [w.dateA, w.dateB], gKey) : { map: new Map(), nApi: 0, nAi: 0, error: undefined as string | undefined };
+  // 3c) Odds pasar (sinyal statistik). Gagal/kuota habis => laga diprediksi tanpa pasar.
+  const mkt = cand.length ? await collectOdds(api, cand.map(c => c.f)) : { map: new Map(), requested: 0 };
   for (const c of cand) {
     if (c.hr && c.ar) { bySrc[c.hr.source]++; bySrc[c.ar.source]++; } else bySrc.elo += 2;
-    preds.push(buildPrediction(c.f, c.hr, c.ar, avgByLeague.get(`${c.f.league.id}:${c.f.league.season}`)!, c.elo, abs.map.get(c.f.fixture.id)));
+    preds.push(buildPrediction(c.f, c.hr, c.ar, avgByLeague.get(`${c.f.league.id}:${c.f.league.season}`)!, c.elo, abs.map.get(c.f.fixture.id), { market: mkt.map.get(c.f.fixture.id), marketW: cal.marketW, tau: cal.tau }));
   }
   preds.sort((a, b) => a.timestamp - b.timestamp);
 
@@ -130,12 +139,13 @@ async function main() {
   writeAtomic(CFG.dataDir, 'predictions.json', out);
   writeAtomic(path.join(CFG.dataDir, 'history'), `${w.dateA}.json`, out);
   const meta: Metadata = { status: skipped && !preds.length && fixtures.length ? 'partial' : 'ok',
-    message: `${preds.length} prediksi dibuat, ${skipped} dilewati (tanpa klasemen/Elo). Sumber tim: resmi ${bySrc.official}, hasil sendiri ${bySrc.own}, AI ${bySrc.ai}, Elo-saja ${bySrc.elo}. Absen: AI ${abs.nAi} laga, API ${abs.nApi} laga.`,
+    message: `${preds.length} prediksi dibuat, ${skipped} dilewati (tanpa klasemen/Elo). Sumber tim: resmi ${bySrc.official}, hasil sendiri ${bySrc.own}, AI ${bySrc.ai}, Elo-saja ${bySrc.elo}. Absen: AI ${abs.nAi} laga, API ${abs.nApi} laga. Pasar: ${mkt.map.size} laga. Kalibrasi: ${cal.n} laga dinilai, tau ${cal.tau}, bobot pasar ${cal.marketW}.`,
     generatedAt: out.generatedAt, attemptedAt: out.generatedAt, window: win,
     counts: { fixtures: fixtures.length, predicted: preds.length, skippedNoStandings: skipped },
     dataSources: { ...bySrc, resultsCollected: col.added, resultsLastDate: results.lastDate },
     api: { used: usage.used, limit: usage.limit, fixturesSource: fxRes.map(r => r?.source ?? 'none').join('+') },
     absences: { api: abs.nApi, ai: abs.nAi, error: abs.error },
+    market: { matched: mkt.map.size, requested: mkt.requested }, calibration: { n: cal.n, tau: cal.tau, marketW: cal.marketW },
     gemini: { used: ai.used, model: ai.model, summarized: ai.summarized, opinions: op.done, opinionAgree: op.agree, error: ai.error ?? op.error } };
   writeAtomic(CFG.dataDir, 'metadata.json', meta);
   console.log(meta.message, `API ${usage.used}/${usage.limit}`, `AI ${ai.summarized}`);

@@ -1,4 +1,4 @@
-import type { Prediction, AHLine, Absence } from '../shared/types.ts';
+import type { Prediction, AHLine, Absence, MarketInfo, Probs3 } from '../shared/types.ts';
 import { CFG } from './config.ts';
 
 /** ===== MESIN STATISTIK DETERMINISTIK (tanpa AI) =====
@@ -7,6 +7,9 @@ import { CFG } from './config.ts';
  * 3. Penyesuaian form 5 laga terakhir (maks ±3%)
  * 4. Poisson + koreksi Dixon-Coles untuk skor rendah
  * 5. Matriks skor -> 1X2, Over/Under, BTTS, Handicap Asia (termasuk seperempat), fair odds
+ * 6. (v2) Penggabungan dengan probabilitas pasar (odds bandar tanpa margin) di ruang log, lalu xG DIFIT ULANG agar seluruh
+ *    turunan (skor, O/U, BTTS, handicap) konsisten dengan 1X2 hasil gabungan. Temperatur (ketajaman) hasil kalibrasi rekam jejak.
+ * 7. (v2) Keyakinan = ketegasan peluang x kualitas data x kesepakatan model-pasar x jenis laga.
  */
 export const MAXG = 10;
 const FACT: number[] = [1];
@@ -133,7 +136,46 @@ export function absenceImpact(list?: Absence[]) {
 }
 type AbsIn = { home: Absence[]; away: Absence[]; source: 'ai' | 'api' | 'both'; checked: boolean };
 
-export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | null, lg: LeagueAvg, elo?: EloInfo | null, abs?: AbsIn | null): Prediction {
+export interface Ext { market?: MarketInfo | null; marketW?: number; tau?: number }
+type T3 = [number, number, number];
+
+/** Statistik dari matriks skor: peluang 1X2 dan Over 2.5. */
+export function matrixStats(m: number[][]) {
+  let ph = 0, pd = 0, pa = 0, o25 = 0;
+  for (let i = 0; i <= MAXG; i++) for (let j = 0; j <= MAXG; j++) { const p = m[i][j]; if (i > j) ph += p; else if (i === j) pd += p; else pa += p; if (i + j >= 3) o25 += p; }
+  return { ph, pd, pa, o25 };
+}
+/** Rata-rata geometrik berbobot (ruang log): hasil ∝ a^(1-w) · b^w. */
+export function geoBlend(a: T3, b: T3, w: number): T3 {
+  const x = a.map((v, i) => Math.pow(Math.max(v, 1e-6), 1 - w) * Math.pow(Math.max(b[i], 1e-6), w)), z = x.reduce((s, v) => s + v, 0);
+  return x.map(v => v / z) as T3;
+}
+/** Temperatur: p ∝ p^tau. tau>1 lebih tajam, tau<1 lebih landai. */
+export function temper(p: T3, tau: number): T3 {
+  const x = p.map(v => Math.pow(Math.max(v, 1e-6), tau)), z = x.reduce((s, v) => s + v, 0);
+  return x.map(v => v / z) as T3;
+}
+/** Cari (λ_home, λ_away) yang matriks skornya paling cocok dengan target 1X2 (+ opsional Over 2.5).
+ *  Pencarian pola pada (total T, selisih d) dengan regulasi kecil agar total gol tidak menyimpang tanpa alasan. */
+export function fitLambdas(lh0: number, la0: number, t: { p: T3; o25?: number }) {
+  const T0 = lh0 + la0;
+  const loss = (T: number, d: number) => {
+    const s = matrixStats(scoreMatrix(clamp((T + d) / 2, 0.15, 5), clamp((T - d) / 2, 0.15, 5)));
+    let e = (s.ph - t.p[0]) ** 2 + (s.pd - t.p[1]) ** 2 + (s.pa - t.p[2]) ** 2;
+    if (t.o25 !== undefined) e += 0.5 * (s.o25 - t.o25) ** 2;
+    return e + 0.01 * Math.log(T / T0) ** 2;
+  };
+  let T = T0, d = lh0 - la0, best = loss(T, d), sT = 0.4, sd = 0.5;
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  for (let it = 0; it < 80 && (sT > 0.004 || sd > 0.004); it++) {
+    let moved = false;
+    for (const [a, b] of dirs) { const nT = clamp(T + a * sT, 0.6, 8), nd = clamp(d + b * sd, -5, 5), e = loss(nT, nd); if (e < best - 1e-12) { best = e; T = nT; d = nd; moved = true; } }
+    if (!moved) { sT /= 2; sd /= 2; }
+  }
+  return { lh: clamp((T + d) / 2, 0.2, 4.5), la: clamp((T - d) / 2, 0.2, 4.5), err: best };
+}
+
+export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | null, lg: LeagueAvg, elo?: EloInfo | null, abs?: AbsIn | null, ext?: Ext): Prediction {
   let lh: number, la: number, minGames = 0, eloOnly = false;
   if (homeRow && awayRow) {
     const s = expectedGoals(homeRow, awayRow, lg); lh = s.lh; la = s.la; minGames = s.minGames;
@@ -149,7 +191,21 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
     lh = clamp(lh * (1 - H.att) * (1 + A.def), 0.2, 4.5); la = clamp(la * (1 - A.att) * (1 + H.def), 0.2, 4.5);
     adj = { home: r3(lh / h0 - 1), away: r3(la / a0 - 1) };
   }
-  const m = scoreMatrix(lh, la);
+
+  // --- Model murni -> (opsional) gabung pasar -> (opsional) temperatur -> fit ulang xG ---
+  let m = scoreMatrix(lh, la);
+  const s0 = matrixStats(m), model3: T3 = [s0.ph, s0.pd, s0.pa];
+  const market = ext?.market ?? null, tau = clamp(ext?.tau ?? 1, CFG.tauMin, CFG.tauMax);
+  let mw = 0, p3: T3 = model3, o25t: number | undefined;
+  if (market) {
+    mw = clamp(ext?.marketW ?? CFG.marketWeight, 0, 0.95) * (market.books >= 3 ? 1 : 0.7); // sedikit bandar -> pasar kurang dipercaya
+    p3 = geoBlend(model3, [market.home, market.draw, market.away], mw);
+    if (market.over25 !== undefined) o25t = (1 - mw) * s0.o25 + mw * market.over25;
+  }
+  const raw3: T3 = p3;
+  if (Math.abs(tau - 1) > 1e-9) p3 = temper(p3, tau);
+  if (market || Math.abs(tau - 1) > 1e-9) { const f = fitLambdas(lh, la, { p: p3, o25: o25t }); lh = f.lh; la = f.la; m = scoreMatrix(lh, la); }
+
   let ph = 0, pd = 0, pa = 0, btts = 0; const tot = new Array(2 * MAXG + 1).fill(0); const cells: { s: string; p: number }[] = [];
   for (let i = 0; i <= MAXG; i++) for (let j = 0; j <= MAXG; j++) {
     const p = m[i][j];
@@ -166,9 +222,20 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
   const handicap = all.filter(a => Math.abs(a.line) <= 1.5);
 
   const pick = decide1x2(ph, pd, pa), maxP = Math.max(ph, pd, pa);
-  const aiPenalty = homeRow?.source === 'ai' || awayRow?.source === 'ai' ? 0.6 : 1; // data AI belum terverifikasi -> keyakinan turun
-  const dataQ = eloOnly ? CFG.eloOnlyPenalty * 0.7 : clamp(minGames / 10 + (elo ? 0.3 : 0), 0, 1) * aiPenalty;
-  const confidence = Math.round(100 * clamp((maxP - 0.34) / 0.5, 0, 1) * (0.5 + 0.5 * dataQ));
+  // --- Keyakinan v2: ketegasan x kualitas data x kesepakatan model-pasar x jenis laga ---
+  const aiData = homeRow?.source === 'ai' || awayRow?.source === 'ai';
+  let q = 0.30 + (elo ? 0.25 : 0) + 0.25 * clamp(minGames / 15, 0, 1) + (market ? 0.25 * Math.min(1, market.books / 3) : 0);
+  if (aiData) q *= 0.6; // data AI belum terverifikasi
+  q = clamp(q, 0, 1);
+  let agreement = 1;
+  if (market) {
+    const tv = 0.5 * (Math.abs(model3[0] - market.home) + Math.abs(model3[1] - market.draw) + Math.abs(model3[2] - market.away));
+    agreement = 1 - clamp((tv - 0.05) * 1.5, 0, 0.35);
+    if (decide1x2(model3[0], model3[1], model3[2]) !== decide1x2(market.home, market.draw, market.away)) agreement *= 0.9;
+  }
+  const comp = CFG.friendlyLeagues.has(fx.league.id) ? CFG.friendlyConfFactor : 1;
+  const core = clamp((maxP - 0.34) / 0.5, 0, 1);
+  const confidence = Math.round(100 * core * (0.5 + 0.5 * q) * agreement * comp);
   const confidenceLevel = confidence >= 50 ? 'high' : confidence >= 30 ? 'medium' : 'low';
   const hn = fx.teams.home.name as string, an = fx.teams.away.name as string;
   const result = pick === '1' ? `${hn} menang` : pick === '2' ? `${an} menang` : 'Seri';
@@ -177,6 +244,7 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
   const safe = dcs.reduce((b, x) => (x.p > b.p ? x : b));
   const o25 = ou[1];
   const team = (t: any, row: any | null, e?: number) => ({ id: t.id, name: t.name, logo: t.logo, rank: row?.rank ?? null, form: row?.form ?? null, played: row?.all?.played ?? 0, dataSource: row ? row.source : 'elo', elo: e ? Math.round(e) : null });
+  const P3 = (a: T3): Probs3 => ({ home: r3(a[0]), draw: r3(a[1]), away: r3(a[2]) });
 
   return {
     id: fx.fixture.id, kickoff: new Date(fx.fixture.timestamp * 1000).toISOString(), timestamp: fx.fixture.timestamp,
@@ -187,9 +255,10 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
     fairOdds: { home: odds(ph), draw: odds(pd), away: odds(pa) },
     doubleChance: { hx: r3(ph + pd), xa: r3(pd + pa), ha: r3(ph + pa) },
     ou, btts: { yes: r3(btts), no: r3(1 - btts) }, topScores, handicap, fairHandicap,
-    confidence, confidenceLevel,
+    confidence, confidenceLevel, conf: { core: r3(core), quality: r3(q), agreement: r3(agreement), comp },
     picks: { result, pick1x2: pick, goals: o25.over >= 0.5 ? 'Over 2.5' : 'Under 2.5', safe: `${safe.t} (${Math.round(Math.min(safe.p, 1) * 100)}%)` },
     aiSummary: 'AI analysis unavailable.',
     absences: abs && adj ? { ...abs, adj } : undefined,
+    modelProbs: P3(model3), rawProbs: P3(raw3), market: market ?? undefined, calib: { tau, marketW: r3(mw) },
   };
 }

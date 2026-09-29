@@ -35,7 +35,7 @@ export async function addAiSummaries(preds: Prediction[], key: string | undefine
 }
 
 /** ===== Opini kedua AI: Gemini membaca hasil pencarian web (Tavily) lalu memprediksi SECARA MANDIRI (tidak diberi angka model, supaya tidak ikut-ikutan). =====
- *  Hasil dibandingkan dengan pick rumus: sepakat -> keyakinan +5, beda -> -12. Angka peluang dari rumus TIDAK diubah. */
+ *  Hasil dibandingkan dengan pick rumus: sepakat -> keyakinan +CFG.aiAgreeBonus, beda -> -CFG.aiDisagreePenalty (kecil; validasi lewat calibration.json). Angka peluang dari rumus TIDAK diubah. */
 type Pick = '1' | 'X' | '2';
 type RawOpinion = { pick: Pick; score: string | null; reason: string };
 export const modelPick = (p: Prediction): Pick => p.picks.pick1x2 ?? (p.probs.home >= p.probs.draw && p.probs.home >= p.probs.away ? '1' : p.probs.away >= p.probs.draw ? '2' : 'X');
@@ -52,7 +52,7 @@ export function validateOpinion(x: any): RawOpinion | null {
   return { pick: pick as Pick, score, reason };
 }
 export function applyOpinion(p: Prediction, o: RawOpinion): boolean {
-  const agree = o.pick === modelPick(p), adj = agree ? 5 : -12;
+  const agree = o.pick === modelPick(p), adj = agree ? CFG.aiAgreeBonus : -CFG.aiDisagreePenalty;
   p.confidence = Math.max(0, Math.min(100, p.confidence + adj));
   p.confidenceLevel = p.confidence >= 50 ? 'high' : p.confidence >= 30 ? 'medium' : 'low';
   p.aiOpinion = { pick: o.pick, score: o.score, reason: o.reason, agree, confAdj: adj };

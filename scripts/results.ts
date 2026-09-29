@@ -8,17 +8,20 @@ import type { Row } from './standings.ts';
  * 1 request/hari (fixture kemarin). Disimpan di data/results.json dan di-commit oleh workflow. */
 export interface S { p: number; gf: number; ga: number }
 export interface TeamRec { name: string; pts: number; all: S; home: S; away: S; form: string }
-export interface ResultsFile { version: 1; lastDate: string | null; seenIds: number[]; leagues: Record<string, Record<string, TeamRec>> }
+/** scores: skor 90 menit per fixture id [kandang, tandang] -> bahan evaluate.ts untuk menilai prediksi. */
+export interface ResultsFile { version: 1; lastDate: string | null; seenIds: number[]; leagues: Record<string, Record<string, TeamRec>>; scores?: Record<string, [number, number]> }
 
-export const emptyResults = (): ResultsFile => ({ version: 1, lastDate: null, seenIds: [], leagues: {} });
+export const emptyResults = (): ResultsFile => ({ version: 1, lastDate: null, seenIds: [], leagues: {}, scores: {} });
 export function loadResults(file: string): ResultsFile {
-  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); if (o?.version === 1 && o.leagues) return o; } catch {}
+  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); if (o?.version === 1 && o.leagues) { o.scores ??= {}; return o; } } catch {}
   return emptyResults();
 }
 export function saveResults(file: string, r: ResultsFile) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = file.replace('.json', '.tmp.json');
-  fs.writeFileSync(tmp, JSON.stringify({ ...r, seenIds: r.seenIds.slice(-4000) }));
+  const seenIds = r.seenIds.slice(-4000), keep = new Set(seenIds.map(String));
+  const scores = Object.fromEntries(Object.entries(r.scores ?? {}).filter(([k]) => keep.has(k)));
+  fs.writeFileSync(tmp, JSON.stringify({ ...r, seenIds, scores }));
   JSON.parse(fs.readFileSync(tmp, 'utf8')); fs.renameSync(tmp, file);
 }
 
@@ -38,6 +41,8 @@ export function addFixture(res: ResultsFile, f: any): boolean {
   const k = `${f.league.id}:${f.league.season}`, lg = (res.leagues[k] ??= {});
   const H = (lg[f.teams.home.id] ??= blank(f.teams.home.name)), A = (lg[f.teams.away.id] ??= blank(f.teams.away.name));
   apply(H, 'home', hg, ag); apply(A, 'away', ag, hg); res.seenIds.push(id);
+  const ft = f?.score?.fulltime; // hasil 90 menit (prediksi dinilai pada 90 menit, bukan perpanjangan waktu/penalti)
+  (res.scores ??= {})[String(id)] = [typeof ft?.home === 'number' ? ft.home : hg, typeof ft?.away === 'number' ? ft.away : ag];
   return true;
 }
 
@@ -51,7 +56,9 @@ export async function collectResults(api: FootballApi, res: ResultsFile, dateA: 
   if (from < earliest) from = earliest; // tanggal lebih lama ditolak paket gratis -> jangan dicoba
   const out = { added: 0, days: 0, stoppedEarly: false };
   while (from <= last && out.days < CFG.maxResultDaysPerRun) {
-    const r = await api.get('fixtures', { date: from, timezone: 'Asia/Jakarta' }, 24 * 365);
+    // BUG LAMA: memakai cache fixture tanggal itu (dibuat saat laga masih NS/berjalan, TTL 1 tahun) -> hasil tak pernah terkumpul.
+    // Sekarang: filter status selesai + tanpa cache file (persist=false) -> selalu data segar, payload lebih kecil.
+    const r = await api.get('fixtures', { date: from, timezone: 'Asia/Jakarta', status: 'FT-AET-PEN' }, 0, false);
     if (!r) { out.stoppedEarly = true; break; }
     const fin = r.data.filter((f: any) => (CFG.allLeagues || CFG.leagues.includes(f.league.id))).sort((a: any, b: any) => a.fixture.timestamp - b.fixture.timestamp);
     for (const f of fin) if (addFixture(res, f)) out.added++;

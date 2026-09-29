@@ -9,11 +9,12 @@ export class FootballApi {
   private key: string; private usage: ApiUsage;
   constructor(key: string, usage: ApiUsage) { this.key = key; this.usage = usage; }
 
-  async get(endpoint: string, params: Record<string, string | number>, ttlH: number): Promise<{ data: any[]; source: Src } | null> {
+  /** persist=false: hanya cache memori (untuk respons besar/sekali pakai, mis. odds & hasil kemarin) -> repo tidak membengkak dan tidak ada risiko cache basi. */
+  async get(endpoint: string, params: Record<string, string | number>, ttlH: number, persist = true): Promise<{ data: any[]; source: Src } | null> {
     const qs = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
     const ck = `${endpoint}_${qs}`;
     if (this.mem.has(ck)) return { data: this.mem.get(ck)!, source: 'cache' };
-    const c = readCache<any[]>(CFG.cacheDir, ck);
+    const c = persist ? readCache<any[]>(CFG.cacheDir, ck) : null;
     const ageH = c ? (Date.now() - c.ts) / 3.6e6 : Infinity;
     if (c && ageH <= ttlH) { this.mem.set(ck, c.data); return { data: c.data, source: 'cache' }; }
 
@@ -29,7 +30,8 @@ export class FootballApi {
       const e = json.errors;
       if (e && (Array.isArray(e) ? e.length : Object.keys(e).length)) throw new Error(JSON.stringify(e));
       const data = json.response ?? [];
-      writeCache(CFG.cacheDir, ck, data); this.mem.set(ck, data);
+      if (persist) writeCache(CFG.cacheDir, ck, data);
+      this.mem.set(ck, data);
       return { data, source: 'live' };
     } catch (err) {
       console.warn(`[football] gagal ${ck}: ${(err as Error).message}`);

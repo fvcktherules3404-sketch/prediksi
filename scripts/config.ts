@@ -38,8 +38,23 @@ export const CFG = {
   drawBoost: 0.08,          // inflasi diagonal skor seri (Poisson cenderung meremehkan seri)
   rho: -0.10,               // koreksi Dixon-Coles skor rendah
   tempoSpread: 0.2,         // ketidakpastian tempo laga (campuran 3 skenario) -> ekor gol lebih realistis
-  eloOnlyPenalty: 0.85,     // Elo-saja sedikit lebih rendah keyakinannya daripada klasemen+Elo
+  eloOnlyPenalty: 0.85,     // (tidak dipakai lagi sejak rumus keyakinan v2; dibiarkan agar env lama tidak error)
   nationalLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 32, 33, 34, 35, 36]), // pakai eloratings.net
   neutralLeagues: new Set<number>([1, 4, 6, 9]),                              // turnamen final: tanpa keunggulan kandang
   noStandingsLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 32, 33, 34, 35, 36]), // turnamen antarnegara: lewati Gemini
+
+  // --- v2: odds pasar sebagai sinyal (API-Football /odds, 1 request/laga, di-cache ringkas 6 jam) ---
+  useOdds: env.USE_ODDS !== 'false', oddsTtlH: 6, oddsMaxRequests: Number(env.ODDS_MAX_REQUESTS ?? 40),
+  marketWeight: 0.6,                 // bobot pasar di ruang log (awal). Setelah cukup data, dituning otomatis oleh evaluate.ts
+  sharpBooks: ['pinnacle'],          // bandar 'tajam' diberi bobot 3x saat merata-ratakan
+  // --- v2: kalibrasi otomatis dari rekam jejak (public/data/calibration.json) ---
+  calibrationFile: 'public/data/calibration.json',
+  calMinN: 150,                      // min. laga dinilai sebelum temperatur (ketajaman) boleh diubah
+  calMinMarketN: 60,                 // min. laga ber-odds sebelum bobot pasar boleh diubah
+  tauMin: 0.85, tauMax: 1.25,        // batas temperatur probabilitas (>1 = lebih tajam, <1 = lebih landai)
+  marketWMin: 0.2, marketWMax: 0.85,
+  // --- v2: keyakinan ---
+  aiAgreeBonus: 4, aiDisagreePenalty: 8, // opini AI sepakat/beda dengan pick (kecil; dituning manual setelah melihat calibration.json -> ai)
+  friendlyLeagues: new Set<number>([10, 667]), friendlyConfFactor: 0.85, // laga persahabatan: rotasi & motivasi acak -> keyakinan dipotong
+  cachePruneDays: 4,                 // hapus file cache lebih tua dari ini (mencegah repo membengkak)
 };
