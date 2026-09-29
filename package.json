@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "predict": "tsx scripts/run.ts",
     "test": "tsx scripts/selftest.ts",
+    "evaluate": "tsx scripts/evaluate.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": { "react": "^18.3.1", "react-dom": "^18.3.1" },
