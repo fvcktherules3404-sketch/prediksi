@@ -46,3 +46,10 @@ Cara pakai di mesin (`scripts/engine.ts`): selisih Elo diubah menjadi xG (`exp(0
 - Tim **dengan klasemen**: gabungan di ruang log, bobot klasemen = laga/(laga+8), sisanya Elo.
 - Tim yang tidak cocok namanya, tim usia (U17-U23), wanita, dan klub non-Eropa tidak dicoba; tidak ada data yang dikarang.
 - Matikan dengan `USE_ELO=false`. Parameter ada di `scripts/config.ts` (`eloSlope`, `eloShrinkK`).
+
+
+## v2: pasar, rekam jejak, kalibrasi otomatis
+- **Odds pasar** (API-Football `/odds`, ±1 request/laga, batas `ODDS_MAX_REQUESTS`=40, matikan dengan `USE_ODDS=false`) digabung dengan model. Tanpa odds, laga tetap diprediksi model murni.
+- **Rekam jejak**: `npm run evaluate` (juga otomatis tiap run) menulis `public/data/calibration.json` dan panel "Rekam jejak" di situs. Ketajaman (`tau`) dan bobot pasar dituning otomatis hanya setelah sampel cukup (150 / 60 laga).
+- **Perbaikan bug**: hasil kemarin kini diambil dengan filter status selesai tanpa cache file (sebelumnya bisa memakai cache fixture yang dibuat saat laga belum selesai, sehingga hasil tidak pernah terkumpul). Cache lebih tua dari 4 hari dihapus otomatis.
+- Detail rumus: `docs/MODEL.md`.
