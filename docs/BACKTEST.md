@@ -11,6 +11,14 @@ Tujuan: menguji mesin (`scripts/engine.ts`) pada ribuan laga lama, tanpa menungg
 
 Butuh minimal ~500 laga yang bisa dinilai, idealnya 3000+ (3-5 musim, beberapa liga). Musim pertama tiap liga dipakai sebagai pemanasan Elo (`--warmup` laga per tim).
 
+## Tim nasional (Nations League, kualifikasi, persahabatan)
+football-data.co.uk hanya berisi liga klub. Untuk tim nasional pakai dataset publik **martj42/international_results** (github.com/martj42/international_results, atau Kaggle "International football results from 1872"):
+1. Unduh `results.csv` (kolom `date, home_team, away_team, home_score, away_score, tournament, city, country, neutral`).
+2. Taruh di folder **terpisah**, misalnya `data/backtest-intl/results.csv` (jangan dicampur dengan CSV klub).
+3. `npm run backtest -- --dir=data/backtest-intl --from=2010 --out=data/backtest-intl-report.json`
+
+Yang berbeda dari klub: Elo memakai bobot K menurut jenis turnamen dan keunggulan kandang 100 poin (0 di laga netral), musim = tahun kalender, dan `neutral` dibaca dari kolom `neutral`. Dataset ini **tidak punya odds**, jadi bagian D (pasar) dilewati. Skor di dataset termasuk perpanjangan waktu (bukan 90 menit), sedikit tidak sama dengan yang dinilai aplikasi. Hasilnya dipakai untuk `eloSlope`, `drawBoost`, dan aturan Seri pada tim nasional.
+
 ## Cara membaca
 - **A.** Bandingkan model dengan baseline dan pasar. Log-loss acak = 1,0986. Model yang tidak mengalahkan "frekuensi liga" berarti belum menambah informasi.
 - **B/C.** Nilai `eloSlope`, `eloShrinkK`, `rho`, `drawBoost`, `tempoSpread` yang terbaik di set latih, dan apakah perbaikannya **nyata** di set uji (selisih dibanding ±1,96 galat baku). Kalau "belum berbeda nyata", biarkan default.
@@ -20,6 +28,6 @@ Butuh minimal ~500 laga yang bisa dinilai, idealnya 3000+ (3-5 musim, beberapa l
 - **G.** Over 2.5 dan BTTS, hanya dilaporkan.
 
 ## Batasan
-- Elo dihitung dari hasil liga yang sama, bukan ClubElo / eloratings.net. `eloSlope` hasilnya hanya pendekatan; tim nasional butuh data internasional tersendiri.
+- Elo dihitung dari hasil di data itu sendiri, bukan ClubElo / eloratings.net. `eloSlope` hasilnya hanya pendekatan. Jalankan klub dan tim nasional secara terpisah.
 - Odds default adalah odds pra-penutupan (mirip waktu aplikasi mengambil odds). `--closing=true` memakai odds penutupan yang lebih tajam, sebagai batas atas.
 - Data cedera, opini AI, dan berita tidak ikut diuji (tidak ada datanya di CSV).
