@@ -56,6 +56,7 @@ function Card({ p }: { p: Prediction }) {
         <span className="chip">AH adil {fmtLine(p.fairHandicap)}</span>
       </div>
       <p className="ai">{p.aiSummary}</p>
+      {p.aiOpinion && <p className="aiop"><b>🤖 Opini AI:</b> {p.aiOpinion.pick === '1' ? `${p.home.name} menang` : p.aiOpinion.pick === '2' ? `${p.away.name} menang` : 'Seri'}{p.aiOpinion.score ? ` (${p.aiOpinion.score})` : ''} · <span className={p.aiOpinion.agree ? 'ok' : 'no'}>{p.aiOpinion.agree ? 'sepakat dengan rumus' : 'beda dengan rumus'}</span><br /><small>{p.aiOpinion.reason}</small></p>}
       <details><summary>Detail skor, gol & handicap</summary>
         {p.absences && <div><p><b>Pemain absen/diragukan</b> ({p.absences.source === 'api' ? 'API, peran belum diketahui' : p.absences.source === 'both' ? 'AI + API' : 'AI + pencarian web, belum terverifikasi'}) — penyesuaian xG {p.absences.adj.home >= 0 ? '+' : ''}{(p.absences.adj.home * 100).toFixed(1)}% / {p.absences.adj.away >= 0 ? '+' : ''}{(p.absences.adj.away * 100).toFixed(1)}%</p>
           {(['home', 'away'] as const).map(sd => <p key={sd}><b>{p[sd].name}:</b> {p.absences![sd].length ? p.absences![sd].map(a => `${a.name}${a.pos !== '?' ? ` (${a.pos}${a.role === 'key' ? ', kunci' : ''})` : ''}${a.status === 'doubt' ? ' ?' : ''}`).join(', ') : 'tidak ada laporan'}</p>)}</div>}
