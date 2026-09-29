@@ -3,6 +3,7 @@ import { CFG } from './config.ts';
 import { readCache, writeCache } from './cache.ts';
 import { geminiGenerate } from './geminiCall.ts';
 import { extractJsonArray } from './geminiStandings.ts';
+import { formatHits, hasSearch, searchMatch } from './search.ts';
 import type { FootballApi } from './footballApi.ts';
 
 export type AbsMap = Map<number, NonNullable<Prediction['absences']>>;
@@ -42,10 +43,12 @@ export async function apiInjuries(api: FootballApi, dates: string[]): Promise<Ma
   return out;
 }
 
-/** Gemini + Google Search: berita cedera/skorsing/kondisi skuad terbaru, dikelompokkan per laga. Wajib ter-grounding, tervalidasi, di-cache. */
+/** Berita cedera/skorsing/kondisi skuad: hasil pencarian web (Tavily) ditempel ke Gemini sebagai SUMBER, lalu Gemini meringkasnya
+ *  ke JSON per laga. Laga tanpa hasil pencarian dilewati (tidak ada panggilan Gemini). Tervalidasi dan di-cache. */
 export async function aiAbsences(key: string, fixtures: any[], hints: Map<number, { home: Absence[]; away: Absence[] }>) {
   const out = new Map<number, { home: Absence[]; away: Absence[] }>(); const today = new Date().toISOString().slice(0, 10);
   let calls = 0, err: string | undefined;
+  if (!hasSearch()) return { map: out, error: 'TAVILY_API_KEY kosong' as string | undefined };
   const pool = fixtures.slice(0, CFG.newsBatchSize * CFG.newsMaxCalls);
   for (let i = 0; i < pool.length && calls < CFG.newsMaxCalls; i += CFG.newsBatchSize) {
     const batch = pool.slice(i, i + CFG.newsBatchSize);
@@ -53,20 +56,25 @@ export async function aiAbsences(key: string, fixtures: any[], hints: Map<number
     let arr: any[];
     if (c && (Date.now() - c.ts) / 3.6e6 <= CFG.newsTtlH) arr = c.data;
     else {
-      calls++;
-      const list = batch.map((f: any) => {
-        const h = hints.get(f.fixture.id) as any, hi = (t: number) => (h?._m?.get(t) ?? []).map((a: Absence) => a.name).join(', ') || '-';
-        return `- id ${f.fixture.id}: ${f.teams.home.name} (kandang) vs ${f.teams.away.name} (tandang), ${f.league.name}, ${f.fixture.date}. Daftar API (belum terverifikasi) kandang: ${hi(f.teams.home.id)}; tandang: ${hi(f.teams.away.id)}`;
-      }).join('\n');
-      const prompt = `Hari ini ${today}. Cari di web berita TERBARU (maks 7 hari terakhir) tentang pemain cedera, skorsing, atau diragukan tampil untuk pertandingan berikut, termasuk perkiraan susunan pemain bila ada:\n${list}\n\n` +
-        `Untuk tiap pemain absen berikan: name, pos (GK|DEF|MID|FWD), role ("key" = bintang/top skor/kiper utama/kapten yang hampir pasti starter; "starter" = starter reguler; "rotation" = pelapis), status ("out" = pasti absen, "doubt" = diragukan), reason (singkat).\n` +
-        `ATURAN KERAS: hanya pemain yang disebut jelas di sumber; JANGAN menebak atau memakai ingatan lama; jika tidak ada berita, beri array kosong. Daftar API di atas boleh dipakai sebagai petunjuk pencarian tetapi hanya sertakan bila sumber web mengonfirmasi. ` +
-        `Balas HANYA JSON array: [{"id":number,"home":[{"name":string,"pos":string,"role":string,"status":string,"reason":string}],"away":[...]}]`;
+      const blocks: string[] = [];
       try {
-        const { json: j } = await geminiGenerate(key, { contents: [{ parts: [{ text: prompt }] }], tools: [{ google_search: {} }], generationConfig: { temperature: 0 } });
-        const cand = j.candidates?.[0];
-        if (!cand?.groundingMetadata?.groundingChunks?.length) throw new Error('tanpa grounding -> dibuang');
-        arr = extractJsonArray((cand.content?.parts ?? []).map((p: any) => p.text ?? '').join(''));
+        for (const f of batch) {
+          const hits = await searchMatch({ id: f.fixture.id, home: f.teams.home.name, away: f.teams.away.name });
+          if (!hits.length) continue; // tanpa sumber web -> laga ini dilewati
+          const h = hints.get(f.fixture.id) as any, hi = (t: number) => (h?._m?.get(t) ?? []).map((a: Absence) => a.name).join(', ') || '-';
+          blocks.push(`### id ${f.fixture.id}: ${f.teams.home.name} (kandang) vs ${f.teams.away.name} (tandang), ${f.league.name}, ${f.fixture.date}\n` +
+            `Daftar API (belum terverifikasi) kandang: ${hi(f.teams.home.id)}; tandang: ${hi(f.teams.away.id)}\nSUMBER:\n${formatHits(hits)}`);
+        }
+      } catch (e) { err = (e as Error).message; console.warn('[berita-web] gagal:', err); break; }
+      if (!blocks.length) continue;
+      calls++;
+      const prompt = `Hari ini ${today}. Dari SUMBER web di bawah (berita terbaru), ekstrak pemain yang cedera, diskors, atau diragukan tampil untuk tiap pertandingan.\n\n${blocks.join('\n\n')}\n\n` +
+        `Untuk tiap pemain absen berikan: name, pos (GK|DEF|MID|FWD), role (\"key\" = bintang/top skor/kiper utama/kapten yang hampir pasti starter; \"starter\" = starter reguler; \"rotation\" = pelapis), status (\"out\" = pasti absen, \"doubt\" = diragukan), reason (singkat).\n` +
+        `ATURAN KERAS: gunakan HANYA informasi yang tertulis di SUMBER laga tersebut; JANGAN menebak atau memakai ingatan lama; jika SUMBER tidak menyebut pemain absen, beri array kosong. Daftar API di atas hanya petunjuk, sertakan hanya bila SUMBER mengonfirmasi. ` +
+        `Balas HANYA JSON array: [{\"id\":number,\"home\":[{\"name\":string,\"pos\":string,\"role\":string,\"status\":string,\"reason\":string}],\"away\":[...]}]`;
+      try {
+        const { json: j } = await geminiGenerate(key, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0 } });
+        arr = extractJsonArray((j.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? '').join(''));
         writeCache(CFG.cacheDir, ck, arr);
       } catch (e) { err = (e as Error).message; console.warn('[gemini-berita] gagal:', err); if (/HTTP 429|HTTP 404/.test(err)) break; continue; }
     }
