@@ -50,7 +50,7 @@ export function loadCsv(file: string): Match[] {
   const iNeu = idx('neutral'), iTour = idx('tournament'), intl = head.includes('home_team') && iTour >= 0; // format martj42/international_results (tim nasional)
   if ([iD, iH, iA, iHG, iAG].some(i => i < 0)) { console.warn(`[lewati] ${path.basename(file)}: kolom Date/HomeTeam/AwayTeam/FTHG/FTAG tidak lengkap`); return []; }
   const base = path.basename(file).replace(/\.csv$/i, ''), nm = /^(.+?)[-_ ](\d.*)$/.exec(base);
-  const fileLeague = nm ? nm[1] : base, fileSeason = nm ? nm[2] : '';
+  const parent = path.basename(path.dirname(file)), fileLeague = nm ? nm[1] : base, fileSeason = nm ? nm[2] : (/^\d{4}$/.test(parent) ? parent : ''); // musim boleh dari nama folder (mis. 2526/E0.csv)
   const oddsSets = (CLOSING ? [...ODDS_CLOSE, ...ODDS_PRE] : [...ODDS_PRE, ...ODDS_CLOSE]).map(c => c.map(x => head.indexOf(x))).filter(ix => ix.every(i => i >= 0));
   const ouSets = (CLOSING ? [...OU_CLOSE, ...OU_PRE] : [...OU_PRE, ...OU_CLOSE]).map(c => c.map(x => head.indexOf(x))).filter(ix => ix.every(i => i >= 0));
   const out: Match[] = [];
@@ -257,9 +257,11 @@ export function runBacktest(matches: Match[]) {
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('backtest.ts')) {
   if (!fs.existsSync(DIR)) { console.error(`Folder ${DIR} tidak ada. Lihat docs/BACKTEST.md untuk cara mengunduh CSV football-data.co.uk.`); process.exit(1); }
-  const files = fs.readdirSync(DIR).filter(f => /\.csv$/i.test(f)).sort();
+  const listCsv = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => e.isDirectory() ? listCsv(path.join(d, e.name)) : /\.csv$/i.test(e.name) ? [path.join(d, e.name)] : []).sort();
+  const files = listCsv(DIR).map(f => path.relative(DIR, f));
   if (!files.length) { console.error(`Tidak ada file .csv di ${DIR}.`); process.exit(1); }
-  const all: Match[] = []; for (const f of files) { const m = loadCsv(path.join(DIR, f)); console.log(`${f}: ${m.length} laga`); all.push(...m); }
+  const ONLY = String(args.only ?? 'all'); // --only=club | intl | all (klub dan tim nasional sebaiknya dijalankan terpisah)
+  const all: Match[] = []; for (const f of files) { const m = loadCsv(path.join(DIR, f)).filter(x => ONLY === 'all' || (ONLY === 'intl') === !!x.intl); console.log(`${f}: ${m.length} laga`); all.push(...m); }
   const rep = runBacktest(all);
   try { fs.mkdirSync(path.dirname(REPORT), { recursive: true }); fs.writeFileSync(REPORT, JSON.stringify(rep, null, 1)); console.log(`\nLaporan: ${REPORT}`); } catch { /* opsional */ }
 }
