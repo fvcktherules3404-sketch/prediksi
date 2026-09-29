@@ -29,3 +29,4 @@ footer{margin:24px 0 8px;color:var(--mut);font-size:12px}
 .track .rec .ok{color:#166534;background:#dcfce7}.track .rec .no{color:#991b1b;background:#fee2e2}
 .chip.tight{background:#e0f2fe;color:#075985;border-color:#bae6fd}
 .aiop{font-size:13px;margin:6px 0}.aiop .ok{color:#166534}.aiop .no{color:#991b1b}
+.tabs{display:flex;gap:8px;margin:12px 0}.tabs button{padding:6px 14px;border-radius:999px;border:1px solid var(--bd);background:transparent;color:inherit;cursor:pointer;font-size:14px}.tabs button.on{background:#e0f2fe;color:#075985;border-color:#bae6fd;font-weight:600}
