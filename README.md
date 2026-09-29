@@ -63,3 +63,8 @@ Kartu menampilkan situasi tabel tiap tim (mengejar juara/4 besar, menjaga posisi
 - **Liga**: `DEFAULT_LEAGUES` ditambah divisi bawah, piala domestik, Skandinavia/Eropa lain, Amerika & Asia. Liga tanpa klasemen/Elo tetap dilewati (tidak dikarang).
 - **Beranda**: laga teratas (keyakinan tinggi). Menu liga menampilkan semua liga yang main + jumlah laga; filter sesi ☀️/🌙.
 - **Prediksi utama** (`scripts/headline.ts`): satu dari Tim/Seri, HDP, Over/Under, BTTS, dipilih dengan ketegasan tertinggi; tampil besar di antara kedua tim.
+- **Pratinjau**: sesi pagi juga membuat prediksi laga malam/dini (ditandai ⏳ Pratinjau) supaya situs tidak kosong di siang hari; sesi 21:00 menghitung ulang laga itu dengan odds & berita terbaru. Jalankan manual sore hari pun tetap mencakup laga malam.
+- **Rekomendasi pick** di beranda: daftar prediksi utama paling tegas untuk laga yang belum mulai.
+- **Semua liga**: `ALL_LEAGUES` sekarang default aktif (matikan dengan `ALL_LEAGUES=false`). Junior (U15–U23), wanita, dan tim cadangan dilewati (`scripts/filter.ts`). Kualifikasi Piala Afrika (ID 36), Liga Champions/Piala Konfederasi CAF, dan liga Afrika ditambahkan.
+- **Prediksi dari odds saja**: laga tanpa klasemen/Elo (mis. klub Afrika) tetap diprediksi bila odds pasar ada (lencana **Pasar**, keyakinan dipotong ×0,8). Memakai sisa kuota odds (`ODDS_MAX_REQUESTS`, default 30/sesi); liga prioritas didahulukan.
+- **Beranda**: maks. 10 laga keyakinan tinggi (minimal 5, diisi laga terbaik berikutnya bila kurang). Menu **☰ Semua liga** dikelompokkan per negara.
