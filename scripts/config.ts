@@ -33,11 +33,11 @@ export const CFG = {
   useAiOpinion: env.AI_OPINION !== 'false', opinionBatchSize: 5, opinionMaxCalls: 4, opinionTtlH: 6,
   // --- Elo (ClubElo untuk klub, eloratings.net untuk tim nasional) ---
   useElo: env.USE_ELO !== 'false', eloTtlH: 20,
-  eloShrinkK: 8,            // bobot klasemen = laga/(laga+K); sisanya Elo. Tanpa klasemen -> 100% Elo
-  eloSlope: 0.0014,         // ln-rasio gol per poin Elo (200 poin ~ selisih ~0,8 gol pada total 2,7)
+  eloShrinkK: 30,           // (backtest: 8 -> 30) bobot klasemen = laga/(laga+K); sisanya Elo. Tanpa klasemen -> 100% Elo
+  eloSlope: 0.0018,         // (backtest: 0.0014 -> 0.0018) ln-rasio gol per poin Elo (200 poin ~ selisih ~0,8 gol pada total 2,7)
   // --- Kalibrasi hasil (seri) ---
-  drawBoost: 0.08,          // inflasi diagonal skor seri (Poisson cenderung meremehkan seri)
-  rho: -0.10,               // koreksi Dixon-Coles skor rendah
+  drawBoost: 0,             // (backtest: 0.08 -> 0; tuning memilih 0 di semua dataset) inflasi diagonal skor seri (Poisson cenderung meremehkan seri)
+  rho: -0.07,               // (backtest: klub -0.04..-0.07, timnas -0.10) koreksi Dixon-Coles skor rendah
   tempoSpread: 0.2,         // ketidakpastian tempo laga (campuran 3 skenario) -> ekor gol lebih realistis
   eloOnlyPenalty: 0.85,     // (tidak dipakai lagi sejak rumus keyakinan v2; dibiarkan agar env lama tidak error)
   nationalLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 32, 33, 34, 35, 36]), // pakai eloratings.net
@@ -46,7 +46,7 @@ export const CFG = {
 
   // --- v2: odds pasar sebagai sinyal (API-Football /odds, 1 request/laga, di-cache ringkas 6 jam) ---
   useOdds: env.USE_ODDS !== 'false', oddsTtlH: 6, oddsMaxRequests: Number(env.ODDS_MAX_REQUESTS ?? 40),
-  marketWeight: 0.6,                 // bobot pasar di ruang log (awal). Setelah cukup data, dituning otomatis oleh evaluate.ts
+  marketWeight: 0.8,                 // (backtest: 0.6 -> 0.8; terbaik 1.0 pada odds penutupan, dikurangi agar aman) bobot pasar di ruang log (awal). Setelah cukup data, dituning otomatis oleh evaluate.ts
   sharpBooks: ['pinnacle'],          // bandar 'tajam' diberi bobot 3x saat merata-ratakan
   // --- v2: kalibrasi otomatis dari rekam jejak (public/data/calibration.json) ---
   calibrationFile: 'public/data/calibration.json',
