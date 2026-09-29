@@ -10,7 +10,8 @@ function Form({ f }: { f?: string | null }) {
   if (!f) return null;
   return <span className="form">{f.slice(-5).split('').map((c, i) => <i key={i} className={c}>{c}</i>)}</span>;
 }
-function Src({ s }: { s?: 'official' | 'own' | 'ai' | 'elo' }) {
+function Src({ s }: { s?: 'official' | 'own' | 'ai' | 'elo' | 'market' }) {
+  if (s === 'market') return <em className="src ai" title="Tidak ada klasemen/Elo untuk tim ini: prediksi hanya dari odds pasar (keyakinan dipotong)">Pasar</em>;
   if (s === 'elo') return <em className="src ai" title="Kekuatan tim dari peringkat Elo (tanpa klasemen musim ini)">Elo</em>;
   if (s === 'ai') return <em className="src ai" title="Data klasemen dari AI (Gemini + pencarian web), belum terverifikasi">AI?</em>;
   if (s === 'own') return <em className="src own" title="Klasemen dihitung dari hasil pertandingan yang dikumpulkan sendiri; sampel bisa masih kecil">hasil</em>;
@@ -49,6 +50,7 @@ function Card({ p }: { p: Prediction }) {
   return (
     <article className="card">
       <header><span>{p.league.name}{p.league.country ? ` · ${p.league.country}` : ''}</span><span>{time(p.kickoff)}</span></header>
+      {p.preview && <div className="prev" title="Dibuat sesi pagi. Dihitung ulang otomatis jam 21:00 WIB dengan odds & berita terbaru.">⏳ Pratinjau · diperbarui 21:00 WIB</div>}
       <div className="teams">
         <div>{p.home.logo && <img src={p.home.logo} alt="" loading="lazy" />}<b>{p.home.name}</b><small>#{p.home.rank ?? '-'} <Form f={p.home.form} /><Src s={p.home.dataSource} /></small></div>
         <div className="vs">xG<br /><b>{p.xg.home.toFixed(2)} - {p.xg.away.toFixed(2)}</b></div>
@@ -127,7 +129,7 @@ const slotOf = (m: Prediction): 'pagi' | 'malam' => {
   const h = (new Date(m.kickoff).getUTCHours() + 7) % 24;
   return h >= 6 && h < 21 ? 'pagi' : 'malam';
 };
-const TOP_N = 6;
+const TOP_N = 10, MIN_SHOWN = 5;
 
 export default function App() {
   const [data, setData] = useState<PredictionsFile | null>(null);
@@ -135,7 +137,7 @@ export default function App() {
   const [cal, setCal] = useState<Calibration | null>(null);
   const [err, setErr] = useState(''); const [tab, setTab] = useState<'formula' | 'ai'>('formula');
   const [league, setLeague] = useState('home'); const [sesi, setSesi] = useState<'all' | 'pagi' | 'malam'>('all');
-  const [q, setQ] = useState(''); const [sort, setSort] = useState<'time' | 'conf'>('time');
+  const [menu, setMenu] = useState(false); const [q, setQ] = useState(''); const [sort, setSort] = useState<'time' | 'conf'>('time');
   useEffect(() => {
     const t = Date.now();
     fetch(`${base}data/predictions.json?t=${t}`).then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json(); }).then(setData).catch(e => setErr(String(e)));
@@ -150,13 +152,21 @@ export default function App() {
     return [...c.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [inSesi]);
   useEffect(() => { if (league !== 'home' && league !== 'all' && !leagues.some(([n]) => n === league)) setLeague('home'); }, [leagues, league]);
-  // Beranda: laga terbaik = keyakinan tinggi, belum lewat kickoff, diurut keyakinan lalu ketegasan prediksi utama
+  // Beranda: hanya laga keyakinan TINGGI (maks 10), yang belum mulai didahulukan. Bila yang tinggi < 5, diisi laga terbaik berikutnya.
   const top = useMemo(() => {
-    const now = Date.now();
-    const ok = inSesi.filter(m => m.timestamp * 1000 > now - 2 * 3.6e6);
-    const pool = ok.length ? ok : inSesi;
-    return [...pool].sort((a, b) => b.confidence - a.confidence || (b.headline?.strength ?? 0) - (a.headline?.strength ?? 0))
-      .filter(m => m.confidenceLevel === 'high' || m.confidence >= 35).slice(0, TOP_N);
+    const now = Date.now(), byConf = (a: Prediction, b: Prediction) => b.confidence - a.confidence || (b.headline?.strength ?? 0) - (a.headline?.strength ?? 0);
+    const rank = (xs: Prediction[]) => [...xs.filter(m => m.timestamp * 1000 > now - 0.5 * 3.6e6).sort(byConf), ...xs.filter(m => m.timestamp * 1000 <= now - 0.5 * 3.6e6).sort(byConf)];
+    const high = rank(inSesi.filter(m => m.confidenceLevel === 'high')).slice(0, TOP_N);
+    if (high.length >= MIN_SHOWN) return high;
+    return [...high, ...rank(inSesi.filter(m => m.confidenceLevel !== 'high')).slice(0, MIN_SHOWN - high.length)];
+  }, [inSesi]);
+  // Rekomendasi pick: prediksi utama dari laga di beranda yang belum mulai, diurut ketegasan
+  const recs = useMemo(() => top.filter(m => m.headline && m.timestamp * 1000 > Date.now()).sort((a, b) => b.headline!.strength - a.headline!.strength), [top]);
+  // Menu liga lengkap dikelompokkan per negara
+  const byCountry = useMemo(() => {
+    const g = new Map<string, Map<string, number>>();
+    for (const m of inSesi) { const c = m.league.country || 'Lainnya'; const l = g.get(c) ?? g.set(c, new Map()).get(c)!; l.set(m.league.name, (l.get(m.league.name) ?? 0) + 1); }
+    return [...g.entries()].map(([c, l]) => ({ c, l: [...l.entries()].sort((a, b) => b[1] - a[1]), n: [...l.values()].reduce((a, b) => a + b, 0) })).sort((a, b) => b.n - a.n || a.c.localeCompare(b.c));
   }, [inSesi]);
   const list = useMemo(() => inSesi
     .filter(m => (league === 'all' || m.league.name === league) && `${m.home.name} ${m.away.name}`.toLowerCase().includes(q.toLowerCase()))
@@ -174,17 +184,29 @@ export default function App() {
       {cal && <Track c={cal} />}
       <div className="sesi">{([['all', 'Seharian'], ['pagi', '☀️ 06:00–21:00'], ['malam', '🌙 21:00–06:00']] as const).map(([k, l]) => <button key={k} className={sesi === k ? 'on' : ''} onClick={() => setSesi(k)}>{l}</button>)}</div>
       <nav className="lg" aria-label="Pilih liga">
-        <button className={league === 'home' ? 'on' : ''} onClick={() => setLeague('home')}>🏠 Beranda</button>
-        <button className={league === 'all' ? 'on' : ''} onClick={() => setLeague('all')}>Semua liga <em>{inSesi.length}</em></button>
-        {leagues.map(([n, c]) => <button key={n} className={league === n ? 'on' : ''} onClick={() => setLeague(n)}>{n} <em>{c}</em></button>)}
+        <button className={league === 'home' ? 'on' : ''} onClick={() => { setLeague('home'); setMenu(false); }}>🏠 Beranda</button>
+        <button className={menu ? 'on' : ''} onClick={() => setMenu(v => !v)}>☰ Semua liga <em>{leagues.length} liga · {inSesi.length} laga</em></button>
+        {league !== 'home' && league !== 'all' && <button className="on" onClick={() => setLeague('home')}>{league} ✕</button>}
       </nav>
+      {menu && <div className="lgmenu">
+        <button className={league === 'all' ? 'on' : ''} onClick={() => { setLeague('all'); setMenu(false); }}>Tampilkan semua laga ({inSesi.length})</button>
+        {byCountry.map(g => <div key={g.c} className="ctry"><b>{g.c} <em>{g.n}</em></b>{g.l.map(([n, c]) => <button key={n} className={league === n ? 'on' : ''} onClick={() => { setLeague(n); setMenu(false); }}>{n} <em>{c}</em></button>)}</div>)}
+      </div>}
       <div className="filters">
         <input placeholder="Cari tim…" value={q} onChange={e => setQ(e.target.value)} />
         <select value={sort} onChange={e => setSort(e.target.value as 'time' | 'conf')}><option value="time">Urut jam</option><option value="conf">Urut keyakinan</option></select>
       </div>
       {data && !shown.length && <p className="sub">Tidak ada pertandingan pada pilihan ini{q ? ' (sesuai pencarian)' : ''}.</p>}
       <div className="tabs"><button className={tab === 'formula' ? 'on' : ''} onClick={() => setTab('formula')}>📊 Prediksi Rumus</button><button className={tab === 'ai' ? 'on' : ''} onClick={() => setTab('ai')}>🤖 Opini AI</button></div>
-      {isHome && tab === 'formula' && !!shown.length && <h2 className="sec">🔥 Laga teratas · keyakinan tinggi <small>({shown.length} dari {inSesi.length} laga; pilih liga di atas untuk daftar lengkap)</small></h2>}
+      {isHome && tab === 'formula' && !!recs.length && <>
+        <h2 className="sec">🎯 Rekomendasi pick <small>(pilihan paling tegas per laga yang belum mulai)</small></h2>
+        <div className="recs">{recs.map(m => <div key={m.id} className={`rec ${m.headline!.market}`}>
+          <b>{m.headline!.label}</b><span className="rm">{MK[m.headline!.market]} · {pct(m.headline!.p)}</span>
+          <span className="rt">{m.home.name} vs {m.away.name}<small>{m.league.name} · {time(m.kickoff)}</small></span>
+          <span className={`chip ${m.confidenceLevel}`}>Keyakinan {m.confidence}</span>
+        </div>)}</div>
+      </>}
+      {isHome && tab === 'formula' && !!shown.length && <h2 className="sec">🔥 Laga teratas · keyakinan tinggi <small>({shown.length} dari {inSesi.length} laga · buka “☰ Semua liga” untuk liga lainnya)</small></h2>}
       {tab === 'formula' ? <div className="grid">{shown.map(m => <Card key={m.id} p={m} />)}</div> : <>
         <p className="sub">Prediksi murni dari AI (Gemini + pencarian web). AI tidak diberi angka rumus dan tidak mengubah peluang di tab Prediksi Rumus. Hanya laga yang punya sumber web yang dianalisis ({shown.filter(m => m.aiOpinion).length} dari {shown.length} laga).</p>
         {cal && <AiTrack c={cal} />}
