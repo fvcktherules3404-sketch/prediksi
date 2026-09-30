@@ -1,0 +1,33 @@
+name: Check API Keys
+
+on:
+  workflow_dispatch:   # GitHub -> Actions -> Check API Keys -> Run workflow
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cek status tiap key API-Football
+        env:
+          K1: ${{ secrets.FOOTBALL_API_KEY }}
+          K2: ${{ secrets.FOOTBALL_API_KEY_2 }}
+          K3: ${{ secrets.FOOTBALL_API_KEY_3 }}
+        run: |
+          check() {
+            name="$1"; key="$2"
+            if [ -z "$key" ]; then
+              echo "$name: (kosong / secret tidak diset)"
+              return
+            fi
+            out=$(curl -s -m 20 -H "x-apisports-key: $key" https://v3.football.api-sports.io/status)
+            res=$(echo "$out" | jq -r '
+              if ((.errors // []) | length) > 0
+              then "SUSPEND/ERROR -> " + (.errors | tostring)
+              else "OK | plan=\(.response.subscription.plan) aktif=\(.response.subscription.active) | request hari ini=\(.response.requests.current)/\(.response.requests.limit_day)"
+              end' 2>/dev/null) || res="respon tidak valid: $(echo "$out" | head -c 200)"
+            echo "$name: $res"
+          }
+          check "FOOTBALL_API_KEY  (key 1)" "$K1"
+          check "FOOTBALL_API_KEY_2 (key 2)" "$K2"
+          check "FOOTBALL_API_KEY_3 (key 3)" "$K3"
