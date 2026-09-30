@@ -3,7 +3,7 @@ import path from 'node:path';
 import { CFG } from './config.ts';
 import { loadResults } from './results.ts';
 import type { Calibration, HistRow, HitStat, MarketTotal, Prediction, Probs3 } from '../shared/types.ts';
-import { pickOptions } from '../shared/picks.ts';
+import { hdpPick as pickHdp } from '../shared/picks.ts';
 
 /** ===== Rekam jejak & kalibrasi otomatis =====
  * Menggabungkan public/data/history/*.json (prediksi) dengan skor 90 menit sebenarnya (data/results.json, cadangan: cache fixture),
@@ -47,7 +47,7 @@ export function ahResult(d: number, line: number): 1 | 0 | -1 {
 
 /** ===== Riwayat & winrate gabungan =====
  * Pilihan per pasar sama dengan yang tampil di kartu: 1X2 = hasil peluang tertinggi, O/U 2.5 & BTTS = sisi >= 50%,
- * HDP = pick HDP tegas (HDP - unggulan / HDP + non-unggulan, mana yang lebih tegas; shared/picks.ts), ada bila peluangnya >= 60%.
+ * HDP = pick HDP kartu (HDP - unggulan / HDP + tim lemah, mana yang lebih tegas; shared/picks.ts hdpPick), peluangnya >= 50%.
  * HDP push (uang kembali) tidak dihitung menang/kalah, dan tidak menggagalkan gabungan. */
 const ouHit = (s: Sample) => (s.pOver25 >= 0.5) === (s.goals[0] + s.goals[1] >= 3);
 const bttsHit = (s: Sample) => (s.pBtts >= 0.5) === (s.goals[0] > 0 && s.goals[1] > 0);
@@ -135,9 +135,9 @@ function scoresFromCache(dir: string): Map<number, [number, number]> {
   return out;
 }
 
-/** Pick HDP tegas laga ini (HDP - / HDP +, mana lebih tegas). undefined bila data handicap tidak ada atau tidak ada garis >= 60%. */
+/** Pick HDP laga ini (sama dengan chip HDP di kartu: HDP - unggulan / HDP + tim lemah). undefined bila data handicap tidak ada. */
 function hdpPick(p: Prediction): { side: '1' | '2'; line: number } | undefined {
-  try { const o = pickOptions(p).others.find(x => x.kind === 'hdpFav' || x.kind === 'hdpDog'); return o?.side && o.line !== undefined ? { side: o.side, line: o.line } : undefined; } catch { return undefined; }
+  try { const o = pickHdp(p); return o?.side && o.line !== undefined ? { side: o.side, line: o.line } : undefined; } catch { return undefined; }
 }
 
 /** Kumpulkan sampel: prediksi (history) yang hasilnya sudah diketahui. Bila satu laga ada di beberapa file, ambil yang terbaru. */
