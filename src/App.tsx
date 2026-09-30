@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Prediction, PredictionsFile, Metadata, Calibration, MarketTotal, HistRow, HitStat } from '../shared/types.ts';
-import { pickOptions } from '../shared/picks.ts';
+import { pickOptions, hdpPick } from '../shared/picks.ts';
 import './picks.css';
 
 const base = import.meta.env.BASE_URL;
@@ -83,7 +83,7 @@ function History({ c }: { c: Calibration }) {
         <div><small>Gabungan 3 pasar · 1X2 + O/U + BTTS benar semua</small><b>{tot(t?.combo3)}</b></div>
         <div><small>Gabungan 4 pasar · + HDP benar semua</small><b>{tot(t?.combo4)}</b></div>
       </div>
-      <p className="sub"><small>Keseluruhan = jumlah tebakan benar dari semua pasar (1X2, O/U 2.5, BTTS, HDP) dibagi jumlah tebakan. Gabungan = satu laga benar hanya bila semua pasarnya benar; salah satu meleset berarti salah. HDP hanya ada bila laga punya pick HDP yang cukup tegas (peluang ≥ 60%), jadi gabungan 4 pasar hanya menghitung laga itu. HDP push (uang kembali) tidak dihitung.</small></p>
+      <p className="sub"><small>Keseluruhan = jumlah tebakan benar dari semua pasar (1X2, O/U 2.5, BTTS, HDP) dibagi jumlah tebakan. Gabungan = satu laga benar hanya bila semua pasarnya benar; salah satu meleset berarti salah. HDP hanya ada bila laga punya pick HDP (peluang ≥ 50%), jadi gabungan 4 pasar hanya menghitung laga itu. HDP push (uang kembali) tidak dihitung.</small></p>
       {!t && <p className="sub"><small>Total HDP, winrate keseluruhan & gabungan, serta daftar laga per pasar akan terisi setelah update otomatis berikutnya (sementara tampil 24 laga terakhir untuk 1X2).</small></p>}
       <h2 className="sec">📜 Semua laga dinilai <small>(terbaru di atas)</small></h2>
       <div className="tabs">{HTABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
@@ -91,7 +91,7 @@ function History({ c }: { c: Calibration }) {
         <p><b>1X2:</b> ✓ bila hasil 90 menit sama dengan tebakan rumus (kandang menang / seri / tandang menang), ✗ bila beda. Seri hanya benar bila skor akhirnya seri; perpanjangan waktu & penalti tidak dihitung.</p>
         <p><b>Over/Under 2.5:</b> tebak Over bila peluang Over ≥ 50%, kalau tidak Under. ✓ bila total gol 3+ (Over) atau 2 ke bawah (Under).</p>
         <p><b>BTTS:</b> tebak Ya bila peluang ≥ 50%. ✓ bila kedua tim mencetak gol (Ya) atau salah satunya nirbobol (Tidak).</p>
-        <p><b>HDP:</b> pick HDP tegas laga itu (HDP - unggulan / HDP + non-unggulan). ✓ menang (penuh/setengah), ✗ kalah, ↔ push, tidak dihitung.</p>
+        <p><b>HDP:</b> pick HDP di kartu (HDP - bila tim unggulan, HDP + bila tim lemah). ✓ menang (penuh/setengah), ✗ kalah, ↔ push, tidak dihitung.</p>
       </details>
       <p className="sub">{HTABS.find(x => x[0] === tab)![1]}: ✓ {nOk} · ✗ {nNo}{nPush ? ` · ↔ ${nPush}` : ''}{nOk + nNo ? ` · benar ${Math.round(nOk / (nOk + nNo) * 100)}%` : ''}</p>
       <div className="track"><div className="rec hscroll">
@@ -130,6 +130,7 @@ function Card({ p }: { p: Prediction }) {
         <span className="chip" title="Hasil paling mungkin menurut rumus (1X2)">Prediksi 1X2: {p.picks.result}</span>
         {Math.abs(h - a) < 0.05 && <span className="chip tight" title="Kedua tim nyaris setara; seri sangat mungkin. Pick tetap satu hasil dengan peluang tertinggi.">⚖️ Ketat · Seri {pct(d)}</span>}
         {p.picks.safe && <span className="chip">Aman: {p.picks.safe}</span>}
+        {(() => { const hd = hdpPick(p); return hd && <span className="chip" title={`HDP ${hd.kind === 'hdpFav' ? '- (tim unggulan)' : '+ (tim lemah)'}: peluang menang handicap, setengah menang dihitung, push (uang kembali) setengah`}>HDP: {hd.label} ({pct(hd.p)})</span>; })()}
         <span className="chip">{p.picks.goals} ({pct(p.picks.goals === 'Over 2.5' ? p.ou[1].over : p.ou[1].under)})</span>
         {p.market && <span className="chip" title={`Peluang implisit pasar (margin dibuang, ${p.market.books} bandar) ikut dihitung`}>Pasar {pct(p.market.home)}/{pct(p.market.draw)}/{pct(p.market.away)}</span>}
         {p.absences && <span className="chip" title="Pemain absen memengaruhi xG">🩹 Absen {p.absences.home.length}-{p.absences.away.length}</span>}
