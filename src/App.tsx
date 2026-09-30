@@ -41,35 +41,43 @@ type HTab = 'x12' | 'hdp' | 'ou' | 'btts' | 'combo';
 const HTABS: [HTab, string][] = [['x12', '1X2'], ['hdp', 'HDP'], ['ou', 'Over/Under'], ['btts', 'BTTS'], ['combo', 'Gabungan']];
 interface HItem { id: number; label: string; res: 'ok' | 'no' | 'push'; note: string; title: string }
 /** Halaman Riwayat: ringkasan rekam jejak, total benar, winrate gabungan, dan daftar SEMUA laga dinilai per pasar (tab). Chip ✓ = tebakan benar, ✗ = salah. */
-function History({ c }: { c: Calibration }) {
+function History({ c, src, setSrc }: { c: Calibration; src: 'formula' | 'ai'; setSrc: (v: 'formula' | 'ai') => void }) {
   const [tab, setTab] = useState<HTab>('x12');
+  const ai = src === 'ai';
+  const sw = <div className="tabs">{([['formula', '📊 Riwayat Rumus'], ['ai', '🤖 Riwayat AI']] as const).map(([k, l]) => <button key={k} className={src === k ? 'on' : ''} onClick={() => setSrc(k)}>{l}</button>)}</div>;
   if (!c.n) return <div className="track"><b>Riwayat</b> — belum ada laga yang selesai dinilai. Akan terisi otomatis setelah hasil pertandingan terkumpul.</div>;
-  const t = c.totals, cnt = (h: HitStat): MarketTotal => ({ n: h.n, hit: Math.round((h.acc ?? 0) * h.n), acc: h.acc });
-  const x12 = t?.x12 ?? { n: c.n, hit: Math.round((c.acc ?? 0) * c.n), acc: c.acc }, ou = t?.ou25 ?? cnt(c.ou25), bt = t?.btts ?? cnt(c.btts);
+  if (ai && !c.ai.own?.n) return <section className="hist">{sw}<div className="track"><b>Riwayat AI</b> — belum ada laga berpick AI yang selesai dinilai.</div></section>;
+  const t = ai ? c.aiTotals : c.totals, hist = ai ? c.aiHistory : c.history, cnt = (h: HitStat): MarketTotal => ({ n: h.n, hit: Math.round((h.acc ?? 0) * h.n), acc: h.acc });
+  const x12 = t?.x12 ?? (ai ? undefined : { n: c.n, hit: Math.round((c.acc ?? 0) * c.n), acc: c.acc }), ou = t?.ou25 ?? (ai ? undefined : cnt(c.ou25)), bt = t?.btts ?? (ai ? undefined : cnt(c.btts));
   const pk1 = (home: string, away: string, k: string) => (k === '1' ? `${home} menang` : k === '2' ? `${away} menang` : 'Seri');
-  const items: HItem[] = c.history
-    ? c.history.flatMap((r: HistRow): HItem[] => {
+  const items: HItem[] = hist
+    ? hist.flatMap((r: HistRow): HItem[] => {
       const label = `${r.home} ${r.score} ${r.away}`, title = `${r.league ?? ''} · ${time(new Date(r.ts * 1000).toISOString())} · keyakinan ${r.conf}`;
       const it = (res: 'ok' | 'no' | 'push', note: string): HItem[] => [{ id: r.id, label, res, note, title }];
       const ok = (b: boolean) => (b ? 'ok' as const : 'no' as const);
       if (tab === 'x12') return it(ok(r.x12.hit), pk1(r.home, r.away, r.x12.pick));
-      if (tab === 'ou') return it(ok(r.ou.hit), `${r.ou.pick === 'over' ? 'Over' : 'Under'} 2.5`);
-      if (tab === 'btts') return it(ok(r.btts.hit), `BTTS ${r.btts.pick === 'yes' ? 'Ya' : 'Tidak'}`);
+      if (tab === 'ou') return r.ou ? it(ok(r.ou.hit), `${r.ou.pick === 'over' ? 'Over' : 'Under'} 2.5`) : [];
+      if (tab === 'btts') return r.btts ? it(ok(r.btts.hit), `BTTS ${r.btts.pick === 'yes' ? 'Ya' : 'Tidak'}`) : [];
       if (tab === 'hdp') return r.hdp ? it(r.hdp.res === 'win' ? 'ok' : r.hdp.res === 'loss' ? 'no' : 'push', `${r.hdp.side === '1' ? r.home : r.away} ${fmtLine(r.hdp.line)}${r.hdp.res === 'push' ? ' (push)' : ''}`) : [];
       const m = (b: boolean) => (b ? '✓' : '✗');
-      return it(ok(r.combo3), `1X2 ${m(r.x12.hit)} · O/U ${m(r.ou.hit)} · BTTS ${m(r.btts.hit)}${r.hdp ? ` · HDP ${r.hdp.res === 'win' ? '✓' : r.hdp.res === 'loss' ? '✗' : '↔'}` : ''}`);
+      return r.combo3 === null || !r.ou || !r.btts ? [] : it(ok(r.combo3), `1X2 ${m(r.x12.hit)} · O/U ${m(r.ou.hit)} · BTTS ${m(r.btts.hit)}${r.hdp ? ` · HDP ${r.hdp.res === 'win' ? '✓' : r.hdp.res === 'loss' ? '✗' : '↔'}` : ''}`);
     })
-    : tab === 'x12' ? c.recent.map((r, i) => ({ id: i, label: `${r.home} ${r.score} ${r.away}`, res: r.hit ? 'ok' as const : 'no' as const, note: pk1(r.home, r.away, r.pick), title: '' })) : [];
+    : tab === 'x12' && !ai ? c.recent.map((r, i) => ({ id: i, label: `${r.home} ${r.score} ${r.away}`, res: r.hit ? 'ok' as const : 'no' as const, note: pk1(r.home, r.away, r.pick), title: '' })) : [];
   const nOk = items.filter(i => i.res === 'ok').length, nNo = items.filter(i => i.res === 'no').length, nPush = items.length - nOk - nNo;
   return (
     <section className="hist">
-      <div className="track">
+      {sw}
+      {ai ? <div className="track">
+        <p><b>Rekam jejak AI</b> · pick AI benar {acc(c.ai.own?.acc)} ({c.ai.own?.n} laga) · rumus pada laga yang sama {acc(c.ai.formulaSame?.acc)}</p>
+        <p>Over/Under 2.5 benar {acc(c.ai.ou25?.acc)} ({c.ai.ou25?.n ?? 0}) · BTTS benar {acc(c.ai.btts?.acc)} ({c.ai.btts?.n ?? 0}) · HDP menang {acc(c.ai.hdp?.acc)} ({c.ai.hdp?.n ?? 0}, push tidak dihitung)</p>
+        <p><small>AI memprediksi mandiri (tanpa angka rumus), jadi hanya laga yang punya opini AI yang masuk sini. Pasar yang tidak diisi AI dilewati. {(c.ai.own?.n ?? 0) < 30 ? 'Sampel masih sangat kecil; jangan disimpulkan.' : ''}</small></p>
+      </div> : <div className="track">
         <p><b>Rekam jejak</b> · {c.n} laga dinilai · tebakan 1X2 benar {acc(c.acc)} · Brier {c.brier?.toFixed(3)} <small>(acak {c.uniform.brier.toFixed(3)}, makin kecil makin baik)</small></p>
         <p>Log-loss {c.logloss?.toFixed(3)} <small>(acak {c.uniform.logloss.toFixed(3)})</small> · Over/Under 2.5 benar {acc(c.ou25.acc)} ({c.ou25.n}) · BTTS benar {acc(c.btts.acc)} ({c.btts.n})</p>
         <p><b>Apakah keyakinan tinggi memang lebih sering benar?</b> Tinggi {acc(c.byLevel.high.acc)} ({c.byLevel.high.n}) · Sedang {acc(c.byLevel.medium.acc)} ({c.byLevel.medium.n}) · Rendah {acc(c.byLevel.low.acc)} ({c.byLevel.low.n})</p>
         {c.market.n > 0 && <p>Pasar vs model ({c.market.n} laga): log-loss model {c.market.llModel?.toFixed(3) ?? '–'} · pasar {c.market.llMarket?.toFixed(3) ?? '–'} · gabungan {c.market.llBlend?.toFixed(3) ?? '–'}</p>}
         <p><small>{c.tuning.note}</small></p>
-      </div>
+      </div>}
       <h2 className="sec">🏆 Total benar</h2>
       <div className="stats">
         <div><small>Tebak menang (1X2)</small><b>{tot(x12)}</b></div>
@@ -83,8 +91,8 @@ function History({ c }: { c: Calibration }) {
         <div><small>Gabungan 3 pasar · 1X2 + O/U + BTTS benar semua</small><b>{tot(t?.combo3)}</b></div>
         <div><small>Gabungan 4 pasar · + HDP benar semua</small><b>{tot(t?.combo4)}</b></div>
       </div>
-      <p className="sub"><small>Keseluruhan = jumlah tebakan benar dari semua pasar (1X2, O/U 2.5, BTTS, HDP) dibagi jumlah tebakan. Gabungan = satu laga benar hanya bila semua pasarnya benar; salah satu meleset berarti salah. HDP hanya ada bila laga punya pick HDP (peluang ≥ 50%), jadi gabungan 4 pasar hanya menghitung laga itu. HDP push (uang kembali) tidak dihitung.</small></p>
-      {!t && <p className="sub"><small>Total HDP, winrate keseluruhan & gabungan, serta daftar laga per pasar akan terisi setelah update otomatis berikutnya (sementara tampil 24 laga terakhir untuk 1X2).</small></p>}
+      <p className="sub"><small>Keseluruhan = jumlah tebakan benar dari semua pasar (1X2, O/U 2.5, BTTS, HDP) dibagi jumlah tebakan. Gabungan = satu laga benar hanya bila semua pasarnya benar; salah satu meleset berarti salah.{ai ? ' Untuk AI, gabungan hanya menghitung laga yang diisi AI di ketiga pasar (1X2, O/U, BTTS); gabungan 4 pasar juga butuh HDP.' : ''} HDP hanya ada bila laga punya pick HDP (peluang ≥ 50%), jadi gabungan 4 pasar hanya menghitung laga itu. HDP push (uang kembali) tidak dihitung.</small></p>
+      {!t && <p className="sub"><small>{ai ? 'Total, winrate, dan daftar laga AI akan terisi setelah update otomatis berikutnya.' : 'Total HDP, winrate keseluruhan & gabungan, serta daftar laga per pasar akan terisi setelah update otomatis berikutnya (sementara tampil 24 laga terakhir untuk 1X2).'}</small></p>}
       <h2 className="sec">📜 Semua laga dinilai <small>(terbaru di atas)</small></h2>
       <div className="tabs">{HTABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
       <details className="how"><summary>Cara membaca ✓ / ✗</summary>
@@ -185,10 +193,11 @@ function AiCard({ p }: { p: Prediction }) {
     </article>
   );
 }
-function AiTrack({ c }: { c: Calibration }) {
+function AiTrack({ c, onOpen }: { c: Calibration; onOpen: () => void }) {
   const o = c.ai.own, f = c.ai.formulaSame;
   if (!o || !o.n) return <div className="track"><b>Rekam jejak AI</b> — belum ada laga berpick AI yang selesai dinilai.</div>;
-  return <div className="track"><b>Rekam jejak AI</b> · pick AI benar {acc(o.acc)} ({o.n} laga) · rumus pada laga yang sama {acc(f?.acc)} · Over/Under {acc(c.ai.ou25?.acc)} ({c.ai.ou25?.n ?? 0}) · BTTS {acc(c.ai.btts?.acc)} ({c.ai.btts?.n ?? 0}) · HDP menang {acc(c.ai.hdp?.acc)} ({c.ai.hdp?.n ?? 0}, push tidak dihitung). {o.n < 30 && <small>Sampel masih sangat kecil; jangan disimpulkan.</small>}</div>;
+  return <div className="track"><b>Rekam jejak AI</b> · pick AI benar {acc(o.acc)} ({o.n} laga) · rumus pada laga yang sama {acc(f?.acc)} · Over/Under {acc(c.ai.ou25?.acc)} ({c.ai.ou25?.n ?? 0}) · BTTS {acc(c.ai.btts?.acc)} ({c.ai.btts?.n ?? 0}) · HDP menang {acc(c.ai.hdp?.acc)} ({c.ai.hdp?.n ?? 0}, push tidak dihitung). {o.n < 30 && <small>Sampel masih sangat kecil; jangan disimpulkan.</small>}
+    <div><button className="openhist" onClick={onOpen}>📜 Buka riwayat AI lengkap →</button></div></div>;
 }
 
 /** Sesi laga: 'pagi' = kickoff 06:00–20:59 WIB, 'malam' = 21:00–05:59 WIB (data lama tanpa field slot dihitung dari jam kickoff). */
@@ -205,7 +214,7 @@ export default function App() {
   const [cal, setCal] = useState<Calibration | null>(null);
   const [err, setErr] = useState(''); const [tab, setTab] = useState<'formula' | 'ai'>('formula');
   const [league, setLeague] = useState('home'); const [sesi, setSesi] = useState<'all' | 'pagi' | 'malam'>('all');
-  const [view, setView] = useState<'prediksi' | 'riwayat'>('prediksi');
+  const [view, setView] = useState<'prediksi' | 'riwayat'>('prediksi'); const [hsrc, setHsrc] = useState<'formula' | 'ai'>('formula');
   const [menu, setMenu] = useState(false); const [q, setQ] = useState(''); const [sort, setSort] = useState<'time' | 'conf'>('time');
   useEffect(() => {
     const t = Date.now();
@@ -254,7 +263,7 @@ export default function App() {
       {err && <div className="warn">Belum ada data prediksi ({err}). Jalankan workflow “Daily Predictions” di GitHub Actions.</div>}
       {data && <p className="sub">Laga {time(data.window.start)} → {time(data.window.end)} · diperbarui {time(data.generatedAt)} · update otomatis 06:00 (laga sampai sore) & 21:00 WIB (laga malam–dini) · AI: {data.ai.used ? `${data.ai.summarized} ringkasan (${data.ai.model})` : 'tidak aktif'}</p>}
       <div className="tabs"><button className={view === 'prediksi' ? 'on' : ''} onClick={() => setView('prediksi')}>⚽ Prediksi</button><button className={view === 'riwayat' ? 'on' : ''} onClick={() => setView('riwayat')}>📜 Riwayat</button></div>
-      {view === 'riwayat' ? (cal ? <History c={cal} /> : <p className="sub">Belum ada data riwayat.</p>) : <>
+      {view === 'riwayat' ? (cal ? <History c={cal} src={hsrc} setSrc={setHsrc} /> : <p className="sub">Belum ada data riwayat.</p>) : <>
       {cal && <Track c={cal} />}
       <div className="sesi">{([['all', 'Seharian'], ['pagi', '☀️ 06:00–21:00'], ['malam', '🌙 21:00–06:00']] as const).map(([k, l]) => <button key={k} className={sesi === k ? 'on' : ''} onClick={() => setSesi(k)}>{l}</button>)}</div>
       <nav className="lg" aria-label="Pilih liga">
@@ -283,7 +292,7 @@ export default function App() {
       {isHome && tab === 'formula' && !!shown.length && <h2 className="sec">🔥 Laga teratas · keyakinan tinggi <small>({shown.length} dari {inSesi.length} laga · buka “☰ Semua liga” untuk liga lainnya)</small></h2>}
       {tab === 'formula' ? <div className="grid">{shown.map(m => <Card key={m.id} p={m} />)}</div> : <>
         <p className="sub">Prediksi murni dari AI (Gemini + pencarian web). AI tidak diberi angka rumus dan tidak mengubah peluang di tab Prediksi Rumus. Hanya laga yang punya sumber web yang dianalisis ({shown.filter(m => m.aiOpinion).length} dari {shown.length} laga).</p>
-        {cal && <AiTrack c={cal} />}
+        {cal && <AiTrack c={cal} onOpen={() => { setHsrc('ai'); setView('riwayat'); window.scrollTo(0, 0); }} />}
         <div className="grid">{shown.filter(m => m.aiOpinion).map(m => <AiCard key={m.id} p={m} />)}</div>
         {!shown.some(m => m.aiOpinion) && <p className="sub">Belum ada opini AI pada pilihan ini.</p>}
       </>}
