@@ -27,3 +27,4 @@
 .track .rec.hscroll{max-height:65vh;overflow-y:auto;-webkit-overflow-scrolling:touch;align-content:flex-start}
 .track .rec .push{color:#854d0e;background:#fef9c3}
 .track .rec span small{opacity:.75}
+.openhist{margin-top:6px;padding:5px 12px;border-radius:999px;border:1px solid #bae6fd;background:#e0f2fe;color:#075985;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
