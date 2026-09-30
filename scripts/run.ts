@@ -38,7 +38,10 @@ export function computeWindow(nowMs: number) {
   const dateA = new Date(baseWib).toISOString().slice(0, 10), dateB = new Date(baseWib + DAY).toISOString().slice(0, 10);
   // endAll: sesi pagi juga membuat PRATINJAU laga malam/dini hari (sampai 06:00 besok) supaya situs tidak kosong di siang hari; sesi 21:00 menghitung ulang laga itu.
   const endAll = (dayStartWib + DAY - off) - 1000;
-  return { start, end, endAll, dayStart, slot, dateA, dateB, dateDay: new Date(dayStartWib).toISOString().slice(0, 10) };
+  // Run dini (05:00-05:59 WIB): hanya laga 06:00 s/d +earlyWindowHours jam di hari yang sama. Laga itu akan sudah mulai saat run 07:10 (status bukan NS -> tidak diprediksi lagi).
+  const early = slot === 'malam' && hod >= CFG.earlyFromHourWIB && hod < pagi && CFG.earlyWindowHours > 0;
+  const earlyStart = end + 1000, earlyEnd = earlyStart + CFG.earlyWindowHours * H - 1000;
+  return { start, end, endAll, dayStart, slot, dateA, dateB, dateDay: new Date(dayStartWib).toISOString().slice(0, 10), early, earlyStart, earlyEnd };
 }
 
 /** Sesi sebuah laga menurut jam kickoff (WIB): 06:00-20:59 pagi, selebihnya malam. */
@@ -67,7 +70,8 @@ export function buildTable(leagueId: number, pool: { official: Row[] | null; own
 
 async function main() {
   const now = Date.now(), w = computeWindow(now);
-  const win = { start: new Date(w.start).toISOString(), end: new Date(w.endAll).toISOString() };
+  const fwStart = w.early ? w.earlyStart : w.start, fwEnd = w.early ? w.earlyEnd : w.endAll; // jendela laga yang diprediksi run ini
+  const win = { start: new Date(fwStart).toISOString(), end: new Date(fwEnd).toISOString() };
   const prevMeta = readJson<Metadata>(path.join(CFG.dataDir, 'metadata.json'));
   const fail = (message: string) => {
     console.error('::warning::' + message);
@@ -90,7 +94,7 @@ async function main() {
   const fixtures = fxRes.flatMap(r => r?.data ?? []).filter((f: any) => {
     if (seen.has(f.fixture.id)) return false; seen.add(f.fixture.id);
     const t = f.fixture.timestamp * 1000;
-    return t >= w.start && t <= w.endAll && f.fixture.status.short === 'NS' && (CFG.allLeagues || CFG.leagues.includes(f.league.id)) && isSeniorMen(f);
+    return t >= fwStart && t <= fwEnd && f.fixture.status.short === 'NS' && (CFG.allLeagues || CFG.leagues.includes(f.league.id)) && isSeniorMen(f);
   });
   console.log(`Window ${win.start} → ${win.end}: ${fixtures.length} pertandingan`);
 
@@ -202,17 +206,22 @@ async function main() {
 
   // 5) Tulis atomik + history
   // Sesi malam: pertahankan laga sesi pagi hari yang sama (dari predictions.json sebelumnya) agar beranda tetap menampilkan seluruh hari.
+  // Sesi pagi: pertahankan laga hari ini yang SUDAH MULAI (mis. 06:30 dari run dini 05:30); laga itu tidak lagi berstatus NS sehingga tidak diprediksi ulang.
+  // Run dini: gabungkan ke file lama per id laga (yang baru menimpa yang sama); prediksi lain tidak dihapus.
+  const prev = readJson<PredictionsFile>(path.join(CFG.dataDir, 'predictions.json')), newIds = new Set(preds.map(p => p.id));
   let kept: Prediction[] = [];
-  if (w.slot === 'malam') {
-    const prev = readJson<PredictionsFile>(path.join(CFG.dataDir, 'predictions.json'));
+  if (w.early) kept = (prev?.matches ?? []).filter(m => !newIds.has(m.id));
+  else if (w.slot === 'malam') {
     if (prev && Date.parse(prev.window?.start) >= w.dayStart - 1000 && Date.parse(prev.window?.start) < w.start) kept = prev.matches.filter(m => m.timestamp * 1000 >= w.dayStart && m.timestamp * 1000 < w.start);
-  }
+  } else kept = (prev?.matches ?? []).filter(m => !newIds.has(m.id) && m.timestamp * 1000 >= w.start && m.timestamp * 1000 <= now);
   const all = [...kept, ...preds].sort((a, b) => a.timestamp - b.timestamp);
-  const fullWin = { start: new Date(kept.length ? w.dayStart : w.start).toISOString(), end: win.end };
-  const out: PredictionsFile = { version: 1, generatedAt: new Date(now).toISOString(), window: fullWin, slot: w.slot,
+  const fullStart = w.early ? Math.min(fwStart, Date.parse(prev?.window?.start) || fwStart) : kept.length && w.slot === 'malam' ? w.dayStart : w.start;
+  const fullEnd = w.early ? Math.max(fwEnd, Date.parse(prev?.window?.end) || fwEnd) : Date.parse(win.end);
+  const fullWin = { start: new Date(fullStart).toISOString(), end: new Date(fullEnd).toISOString() };
+  const out: PredictionsFile = { version: 1, generatedAt: new Date(now).toISOString(), window: fullWin, slot: w.early ? 'pagi' : w.slot,
     ai: { used: ai.used, model: ai.model, summarized: ai.summarized }, api: { used: usage.used, limit: usage.limit }, matches: all };
   writeAtomic(CFG.dataDir, 'predictions.json', out);
-  writeAtomic(path.join(CFG.dataDir, 'history'), w.slot === 'pagi' ? `${w.dateDay}.json` : `${w.dateDay}-malam.json`, { ...out, matches: preds }); // history hanya laga sesi ini (evaluate memakai versi terbaru per laga)
+  writeAtomic(path.join(CFG.dataDir, 'history'), w.early ? `${w.dateDay}-dini.json` : w.slot === 'pagi' ? `${w.dateDay}.json` : `${w.dateDay}-malam.json`, { ...out, matches: preds }); // history hanya laga run ini (evaluate memakai versi terbaru per laga)
   const aiSigs = [...abs.ctx.values()].reduce((a, c) => a + aiCtxCount(c), 0), aiMatches = [...abs.ctx.values()].filter(c => aiCtxCount(c) > 0).length;
   const meta: Metadata = { status: skipped && !preds.length && fixtures.length ? 'partial' : 'ok',
     message: `${preds.length} prediksi dibuat, ${skipped} dilewati (tanpa klasemen/Elo). Sumber tim: resmi ${bySrc.official}, hasil sendiri ${bySrc.own}, AI ${bySrc.ai}, Elo-saja ${bySrc.elo}, odds-saja ${bySrc.market}. Absen: AI ${abs.nAi} laga, API ${abs.nApi} laga. Pasar: ${mkt.map.size} laga. Konteks AI: ${aiMatches} laga bersinyal dari ${abs.nCtx} diperiksa. Kalibrasi: ${cal.n} laga dinilai, tau ${cal.tau}, bobot pasar ${cal.marketW}.`,

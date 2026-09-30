@@ -175,7 +175,7 @@ export function loadSamples(): Sample[] {
   const histDir = path.join(CFG.dataDir, 'history'), latest = new Map<number, { at: string; p: Prediction }>();
   try {
     for (const f of fs.readdirSync(histDir)) {
-      if (!/^\d{4}-\d{2}-\d{2}(-malam)?\.json$/.test(f)) continue;
+      if (!/^\d{4}-\d{2}-\d{2}(-malam|-dini)?\.json$/.test(f)) continue;
       try {
         const j = JSON.parse(fs.readFileSync(path.join(histDir, f), 'utf8'));
         for (const p of (j.matches ?? []) as Prediction[]) { const c = latest.get(p.id); if (!c || String(j.generatedAt) >= c.at) latest.set(p.id, { at: String(j.generatedAt), p }); }

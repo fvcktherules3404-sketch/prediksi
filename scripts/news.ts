@@ -26,6 +26,16 @@ export function mergeAbsences(api: Absence[], ai: Absence[]): Absence[] {
   return out.slice(0, 10);
 }
 
+/** Simpanan absen per LAGA (bukan per batch), hanya ditulis dari hasil Gemini yang SEGAR. Dipakai sebagai cadangan bila run berikutnya tidak menemukan berita
+ *  (pencarian gagal/kosong, Gemini gagal, kuota habis), maksimal CFG.absKeepH jam. Hasil kosong dari run yang menemukan berita DITERIMA (pemain dianggap sembuh). */
+const absKey = (id: number) => `absfx_${id}`;
+const cleanAbs = (l: any): Absence[] => (Array.isArray(l) ? l : []).map(validateAbsence).filter((a): a is Absence => !!a).slice(0, 8);
+export function saveAbsFx(dir: string, id: number, home: any, away: any, cx: any) { try { writeCache(dir, absKey(id), { home: cleanAbs(home), away: cleanAbs(away), cx: cx ?? null }); } catch { /* cadangan saja */ } }
+export function loadAbsFx(dir: string, id: number, maxH = CFG.absKeepH, now = Date.now()): { home: Absence[]; away: Absence[]; cx: AiCtx | null } | null {
+  const c = readCache<any>(dir, absKey(id)); if (!c || !c.data || !(now - c.ts <= maxH * 3.6e6)) return null;
+  return { home: cleanAbs(c.data.home), away: cleanAbs(c.data.away), cx: c.data.cx && Array.isArray(c.data.cx.sigs) ? c.data.cx as AiCtx : null };
+}
+
 /** Absen dari endpoint injuries API-Football: 1 request per tanggal (bukan per laga). */
 export async function apiInjuries(api: FootballApi, dates: string[]): Promise<Map<number, { home: Absence[]; away: Absence[] }>> {
   const byFx = new Map<number, Map<number, Absence[]>>(); let got = 0;
@@ -49,7 +59,12 @@ export async function apiInjuries(api: FootballApi, dates: string[]): Promise<Ma
 export async function aiAbsences(key: string, fixtures: any[], hints: Map<number, { home: Absence[]; away: Absence[] }>, ctxHints: Map<number, CtxHint> = new Map()) {
   const out = new Map<number, { home: Absence[]; away: Absence[] }>(), ctxOut = new Map<number, AiCtx>(); let nChecked = 0; const today = new Date().toISOString().slice(0, 10);
   let calls = 0, err: string | undefined;
-  if (!hasSearch()) return { map: out, ctx: ctxOut, nCtx: 0, error: 'TAVILY_API_KEY kosong' as string | undefined };
+  const reuse = () => { // laga yang tidak diperiksa ulang di run ini -> pakai hasil run sebelumnya (<= absKeepH jam)
+    let n = 0;
+    for (const f of fixtures) { const id = f.fixture.id; if (out.has(id)) continue; const o = loadAbsFx(CFG.cacheDir, id); if (!o) continue; out.set(id, { home: o.home, away: o.away }); if (CFG.ctxAi && o.cx) { ctxOut.set(id, o.cx); nChecked++; } n++; }
+    if (n) console.log(`[gemini-berita] ${n} laga memakai data run sebelumnya (berita baru tidak ditemukan)`);
+  };
+  if (!hasSearch()) { reuse(); return { map: out, ctx: ctxOut, nCtx: nChecked, error: 'TAVILY_API_KEY kosong' as string | undefined }; }
   // v6: kuota terbatas -> laga penting (final, gugur, derbi, grup timnas) didahulukan; urutan sama untuk laga sederajat (sort stabil)
   const pool = (CFG.ctxAi ? [...fixtures].sort((a, b) => matchImportance(b) - matchImportance(a)) : fixtures).slice(0, CFG.newsBatchSize * CFG.newsMaxCalls);
   for (let i = 0; i < pool.length && calls < CFG.newsMaxCalls; i += CFG.newsBatchSize) {
@@ -86,6 +101,7 @@ export async function aiAbsences(key: string, fixtures: any[], hints: Map<number
           return { id: it?.id, home: it?.home, away: it?.away, cx };
         });
         writeCache(CFG.cacheDir, ck, arr);
+        for (const it of arr) if (batch.some((f: any) => f.fixture.id === it?.id)) saveAbsFx(CFG.cacheDir, it.id, it.home, it.away, it.cx); // hanya hasil segar (bukan hasil baca cache) supaya umur data tidak diperpanjang
       } catch (e) { err = (e as Error).message; console.warn('[gemini-berita] gagal:', err); if (/HTTP 429|HTTP 404/.test(err)) break; continue; }
     }
     for (const it of arr) {
@@ -95,6 +111,7 @@ export async function aiAbsences(key: string, fixtures: any[], hints: Map<number
       if (CFG.ctxAi && it.cx && typeof it.cx === 'object' && Array.isArray(it.cx.sigs)) { ctxOut.set(fx.fixture.id, it.cx as AiCtx); nChecked++; }
     }
   }
+  reuse();
   console.log(`[gemini-berita] ${out.size}/${pool.length} laga, ${calls} panggilan${CFG.ctxAi ? `, konteks AI ${nChecked} laga diperiksa` : ''}`);
   return { map: out, ctx: ctxOut, nCtx: nChecked, error: err };
 }

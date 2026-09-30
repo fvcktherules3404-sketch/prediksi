@@ -435,6 +435,48 @@ import { aiAbsences } from './news.ts';
 }
 console.log('konteks AI OK');
 
+// --- run dini 05:30 WIB + cadangan absen per laga ---
+import { loadAbsFx } from './news.ts';
+{
+  const e = computeWindow(Date.UTC(2026, 8, 30, 22, 30)); // 1 Okt 05:30 WIB
+  assert(e.early && e.slot === 'malam', 'run 05:30 = run dini'); assert.equal(e.earlyStart, Date.UTC(2026, 8, 30, 23, 0)); assert.equal(e.earlyEnd, Date.UTC(2026, 9, 1, 1, 0) - 1000);
+  assert.equal(e.earlyStart, e.end + 1000, 'jendela dini menyambung tepat setelah sesi malam');
+  assert(!computeWindow(Date.UTC(2026, 8, 30, 20, 0)).early, '03:00 WIB bukan run dini'); assert(!computeWindow(Date.UTC(2026, 8, 30, 23, 10)).early, '06:10 WIB = sesi pagi biasa'); assert(!computeWindow(Date.UTC(2026, 8, 30, 14, 0)).early);
+  assert.equal(computeWindow(Date.UTC(2026, 8, 30, 23, 10)).slot, 'pagi');
+}
+{
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'abs-')), oldDir = CFG.cacheDir, realFetch = globalThis.fetch; let mode: 'news' | 'empty' | 'none' = 'news';
+  const hit = { title: 'x', url: 'https://a.com/a', content: 'Zed Player will miss the match with a knee injury the club confirmed on Tuesday' };
+  CFG.cacheDir = tmp; process.env.TAVILY_API_KEY = 'tv';
+  globalThis.fetch = (async (u: any) => {
+    if (String(u).includes('tavily')) return new Response(JSON.stringify({ results: mode === 'none' ? [] : [hit, { ...hit, url: 'https://b.com/b' }, { ...hit, url: 'https://c.com/c' }] }));
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify([{ id: 7101, home: mode === 'news' ? [{ name: 'Zed Player', pos: 'FWD', role: 'key', status: 'out', reason: 'knee' }] : [], away: [] }]) }] } }] }));
+  }) as any;
+  const wipeBatch = () => { for (const f of fs.readdirSync(tmp)) if (!f.startsWith('absfx_')) fs.unlinkSync(path.join(tmp, f)); };
+  try {
+    const fx = { fixture: { id: 7101, date: '2026-10-01T06:30:00+07:00', timestamp: 1e9 }, league: { id: 39, name: 'L', round: 'Regular Season - 5', season: 2026 }, teams: { home: { id: 1, name: 'Alpha' }, away: { id: 2, name: 'Beta' } } };
+    const r1 = await aiAbsences('k', [fx], new Map());
+    assert.equal(r1.map.get(7101)!.home.length, 1, 'run 1 menemukan Zed Player absen'); assert(loadAbsFx(tmp, 7101), 'disimpan per laga');
+    // run 2: pencarian kosong -> pakai data run 1
+    wipeBatch(); mode = 'none';
+    const r2 = await aiAbsences('k', [fx], new Map());
+    assert.equal(r2.map.get(7101)?.home[0]?.name, 'Zed Player', 'berita tidak ditemukan -> data run 1 dipakai');
+    // run 2b: tanpa kunci pencarian -> tetap pakai data lama
+    wipeBatch(); delete process.env.TAVILY_API_KEY;
+    assert.equal((await aiAbsences('k', [fx], new Map())).map.get(7101)?.home[0]?.name, 'Zed Player', 'tanpa Tavily -> data lama'); process.env.TAVILY_API_KEY = 'tv';
+    // run 3: berita ditemukan, AI bilang tidak ada yang absen -> hasil kosong DITERIMA
+    wipeBatch(); mode = 'empty';
+    const r3 = await aiAbsences('k', [fx], new Map());
+    assert.equal(r3.map.get(7101)!.home.length, 0, 'berita ada & AI menyimpulkan kosong -> sembuh'); assert.equal(loadAbsFx(tmp, 7101)!.home.length, 0, 'simpanan ikut diperbarui');
+    // data lebih dari 24 jam tidak dipakai; hasil baca cache batch tidak memperpanjang umur data
+    saveAbsFxOld(tmp, 7101);
+    wipeBatch(); mode = 'none';
+    assert.equal((await aiAbsences('k', [fx], new Map())).map.has(7101), false, 'data > 24 jam dibuang');
+  } finally { globalThis.fetch = realFetch; CFG.cacheDir = oldDir; delete process.env.TAVILY_API_KEY; }
+  function saveAbsFxOld(dir: string, id: number) { fs.writeFileSync(path.join(dir, `absfx_${id}.json`), JSON.stringify({ ts: Date.now() - 25 * 3.6e6, data: { home: [{ name: 'Zed Player', pos: 'FWD', role: 'key', status: 'out' }], away: [], cx: null } })); }
+}
+console.log('run dini & cadangan absen OK');
+
 {
   // multi-key: key 1 habis (batas harian) -> pindah ke key 2; semua habis -> null
   assert.deepEqual(readApiKeys({ FOOTBALL_API_KEY: 'a', FOOTBALL_API_KEY_2: 'b', FOOTBALL_API_KEY_3: '', FOOTBALL_API_KEYS: 'b, c' }), ['a', 'b', 'c']);

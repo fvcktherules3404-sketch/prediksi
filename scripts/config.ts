@@ -23,6 +23,9 @@ export const CFG = {
   windowStartHourWIB: 6,          // (lama, tidak dipakai lagi) diganti sesi di bawah
   // v4: dua sesi per hari. Sesi 'pagi' berjalan 06:00 WIB -> menjelang 21:00 (laga jam 19-20 ikut). Sesi 'malam' 21:00 -> 05:59 WIB.
   slotHoursWIB: { pagi: 6, malam: 21 },
+  // Run tambahan 05:30 WIB (cron 22:30 UTC): hanya laga 06:00 s/d +earlyWindowHours jam (laga yang akan sudah mulai saat run 07:10). Run dari earlyFromHour s/d 05:59 WIB dianggap run dini.
+  earlyFromHourWIB: 5, earlyWindowHours: 2,
+  absKeepH: 24,                   // data absen/konteks per laga dari run sebelumnya dipakai ulang maksimal sekian jam bila run berikutnya tidak menemukan berita
   footballBase: 'https://v3.football.api-sports.io',
   dailyRequestLimit: Number(env.FOOTBALL_DAILY_LIMIT ?? 100), // free tier API-Football
   requestReserve: 8,              // sisa request yang tidak boleh dipakai
