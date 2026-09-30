@@ -8,6 +8,8 @@ const DEFAULT_LEAGUES = [
   71,128,253,262,98,292,307,274,188,169,13,11,17,
   // tim nasional: event besar, kualifikasi, friendly (10 = timnas, 667 = klub)
   1,4,5,6,9,22,29,30,31,32,33,34,35,36,10,667,
+  // Asia: Gulf Cup (25), FIFA Asean Cup (1247)
+  25,1247,
   // kasta 2-3 & piala domestik
   40,41,42,141,136,79,80,62,63,89,95,145,204,180,72,129,99,293,
   45,48,143,137,81,66,
@@ -58,9 +60,9 @@ export const CFG = {
   rho: -0.07,               // (backtest: klub -0.04..-0.07, timnas -0.10) koreksi Dixon-Coles skor rendah
   tempoSpread: 0.2,         // ketidakpastian tempo laga (campuran 3 skenario) -> ekor gol lebih realistis
   eloOnlyPenalty: 0.85,     // (tidak dipakai lagi sejak rumus keyakinan v2; dibiarkan agar env lama tidak error)
-  nationalLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 22, 29, 30, 31, 32, 33, 34, 35, 36]), // pakai eloratings.net
+  nationalLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 22, 25, 29, 30, 31, 32, 33, 34, 35, 36, 1247]), // pakai eloratings.net (25 = Gulf Cup, 1247 = FIFA Asean Cup)
   neutralLeagues: new Set<number>([1, 4, 6, 9]),                              // turnamen final: tanpa keunggulan kandang
-  noStandingsLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 22, 29, 30, 31, 32, 33, 34, 35, 36]), // turnamen antarnegara: lewati Gemini
+  noStandingsLeagues: new Set<number>([1, 4, 5, 6, 9, 10, 22, 25, 29, 30, 31, 32, 33, 34, 35, 36, 1247]), // turnamen antarnegara: lewati Gemini
 
   // --- v2: odds pasar sebagai sinyal (API-Football /odds, 1 request/laga, di-cache ringkas 6 jam) ---
   useOdds: env.USE_ODDS !== 'false', oddsTtlH: 6, oddsMaxRequests: Number(env.ODDS_MAX_REQUESTS ?? 30) /* per sesi (2 sesi/hari berbagi kuota 100); laga tanpa data tim tetap diprediksi dari odds bila kuota cukup */,
