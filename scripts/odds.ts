@@ -59,7 +59,9 @@ export function parseMarket(resp: any[]): MarketInfo | null {
 export async function collectOdds(api: FootballApi, fixtures: any[], budget = CFG.oddsMaxRequests, into = new Map<number, MarketInfo>(), keepOrder = false) {
   const map = into; let requested = 0;
   if (!CFG.useOdds) return { map, requested };
-  const list = keepOrder ? [...fixtures] : [...fixtures].sort((a, b) => a.fixture.timestamp - b.fixture.timestamp);
+  // Prioritas: urutan liga di CFG.leagues (liga besar dulu), lalu jam kickoff. Liga di luar daftar paling belakang.
+  const pr = (f: any) => { const i = CFG.leagues.indexOf(f.league.id); return i < 0 ? 999 : i; };
+  const list = keepOrder ? [...fixtures] : [...fixtures].sort((a, b) => pr(a) - pr(b) || a.fixture.timestamp - b.fixture.timestamp);
   for (const f of list) {
     const id = f.fixture.id as number, key = `mkt_${id}`;
     const c = readCache<MarketInfo | null>(CFG.cacheDir, key);
