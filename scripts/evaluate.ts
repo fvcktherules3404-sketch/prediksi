@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CFG } from './config.ts';
 import { loadResults } from './results.ts';
-import type { Calibration, HitStat, Prediction, Probs3 } from '../shared/types.ts';
+import type { Calibration, HistRow, HitStat, MarketTotal, Prediction, Probs3 } from '../shared/types.ts';
+import { pickOptions } from '../shared/picks.ts';
 
 /** ===== Rekam jejak & kalibrasi otomatis =====
  * Menggabungkan public/data/history/*.json (prediksi) dengan skor 90 menit sebenarnya (data/results.json, cadangan: cache fixture),
@@ -29,6 +30,7 @@ const hit = (xs: boolean[]): HitStat => ({ n: xs.length, acc: xs.length ? r4(xs.
 export interface Sample {
   id: number; ts: number; home: string; away: string; pick: Out; out: Out; goals: [number, number];
   probs: Probs3; raw: Probs3; model?: Probs3; market?: Probs3;
+  league?: string; hdp?: { side: '1' | '2'; line: number };
   conf: number; level: 'high' | 'medium' | 'low'; pOver25: number; pBtts: number; aiAgree?: boolean; aiPick?: Out; aiBtts?: 'yes' | 'no'; aiOu?: 'over' | 'under'; aiHdp?: { side: '1' | '2'; line: number };
 }
 
@@ -42,6 +44,20 @@ export function ahResult(d: number, line: number): 1 | 0 | -1 {
   const m = comps.reduce((a, c) => a + (d + c > 1e-9 ? 1 : d + c < -1e-9 ? -1 : 0), 0) / comps.length;
   return m > 0 ? 1 : m < 0 ? -1 : 0;
 }
+
+/** ===== Riwayat & winrate gabungan =====
+ * Pilihan per pasar sama dengan yang tampil di kartu: 1X2 = hasil peluang tertinggi, O/U 2.5 & BTTS = sisi >= 50%,
+ * HDP = pick HDP tegas (HDP - unggulan / HDP + non-unggulan, mana yang lebih tegas; shared/picks.ts), ada bila peluangnya >= 60%.
+ * HDP push (uang kembali) tidak dihitung menang/kalah, dan tidak menggagalkan gabungan. */
+const ouHit = (s: Sample) => (s.pOver25 >= 0.5) === (s.goals[0] + s.goals[1] >= 3);
+const bttsHit = (s: Sample) => (s.pBtts >= 0.5) === (s.goals[0] > 0 && s.goals[1] > 0);
+const hdpRes = (s: Sample): 'win' | 'loss' | 'push' | null => {
+  if (!s.hdp) return null;
+  const r = ahResult(s.hdp.side === '1' ? s.goals[0] - s.goals[1] : s.goals[1] - s.goals[0], s.hdp.line);
+  return r === 1 ? 'win' : r === -1 ? 'loss' : 'push';
+};
+const total = (xs: boolean[]): MarketTotal => { const h = xs.filter(Boolean).length; return { n: xs.length, hit: h, acc: xs.length ? r4(h / xs.length) : null }; };
+const HIST_MAX = 3000;
 export function summarize(samples: Sample[], now = new Date()): Calibration {
   const n = samples.length;
   const bins = [[0, 20], [20, 40], [40, 60], [60, 101]].map(([lo, hi]) => {
@@ -69,6 +85,22 @@ export function summarize(samples: Sample[], now = new Date()): Calibration {
   } else if (mk.length) note += ` Bobot pasar tetap ${CFG.marketWeight} (${mk.length}/${CFG.calMinMarketN} laga ber-odds).`;
 
   const recent = [...samples].sort((a, b) => b.ts - a.ts).slice(0, 24).map(s => ({ home: s.home, away: s.away, pick: s.pick, score: `${s.goals[0]}-${s.goals[1]}`, hit: s.pick === s.out }));
+  const combo3 = (s: Sample) => s.pick === s.out && ouHit(s) && bttsHit(s);
+  const combo4 = (s: Sample): boolean | null => { const r = hdpRes(s); return r === null || r === 'push' ? null : combo3(s) && r === 'win'; };
+  const history: HistRow[] = [...samples].sort((a, b) => b.ts - a.ts).slice(0, HIST_MAX).map(s => {
+    const r = hdpRes(s);
+    return { id: s.id, ts: s.ts, league: s.league, home: s.home, away: s.away, score: `${s.goals[0]}-${s.goals[1]}`, conf: s.conf,
+      x12: { pick: s.pick, hit: s.pick === s.out }, ou: { pick: s.pOver25 >= 0.5 ? 'over' : 'under', hit: ouHit(s) }, btts: { pick: s.pBtts >= 0.5 ? 'yes' : 'no', hit: bttsHit(s) },
+      ...(s.hdp && r ? { hdp: { side: s.hdp.side, line: s.hdp.line, res: r } } : {}), combo3: combo3(s), combo4: combo4(s) };
+  });
+  const hdpDone = samples.map(hdpRes).filter((r): r is 'win' | 'loss' => r === 'win' || r === 'loss');
+  const c4 = samples.map(combo4).filter((x): x is boolean => x !== null);
+  const totals = {
+    x12: total(samples.map(s => s.pick === s.out)), ou25: total(samples.map(ouHit)), btts: total(samples.map(bttsHit)),
+    hdp: total(hdpDone.map(r => r === 'win')), hdpPush: samples.filter(s => hdpRes(s) === 'push').length,
+    overall: total([...samples.map(s => s.pick === s.out), ...samples.map(ouHit), ...samples.map(bttsHit), ...hdpDone.map(r => r === 'win')]),
+    combo3: total(samples.map(combo3)), combo4: total(c4),
+  };
   return {
     version: 1, updatedAt: now.toISOString(), n,
     acc: hit(samples.map(s => s.pick === s.out)).acc, brier: r4(mean(samples.map(s => brier(s.probs, s.out)))), logloss: r4(mean(samples.map(s => ll(s.probs, s.out)))),
@@ -81,7 +113,7 @@ export function summarize(samples: Sample[], now = new Date()): Calibration {
       btts: hit(samples.filter(s => s.aiBtts).map(s => (s.aiBtts === 'yes') === (s.goals[0] > 0 && s.goals[1] > 0))),
       hdp: hit(samples.filter(s => s.aiHdp).map(s => ahResult(s.aiHdp!.side === '1' ? s.goals[0] - s.goals[1] : s.goals[1] - s.goals[0], s.aiHdp!.line)).filter(r => r !== 0).map(r => r === 1)) },
     market: { n: mk.length, llModel: r4(llAt(0)), llMarket: r4(llAt(1)), llBlend: r4(llAt(marketW)), bestW: bestW === null ? null : r4(bestW) },
-    tuning: { tauRaw: r4(tauRaw), tau: r4(tau)!, marketW: r4(marketW)!, note }, recent,
+    tuning: { tauRaw: r4(tauRaw), tau: r4(tau)!, marketW: r4(marketW)!, note }, recent, totals, history,
   };
 }
 
@@ -103,6 +135,11 @@ function scoresFromCache(dir: string): Map<number, [number, number]> {
   return out;
 }
 
+/** Pick HDP tegas laga ini (HDP - / HDP +, mana lebih tegas). undefined bila data handicap tidak ada atau tidak ada garis >= 60%. */
+function hdpPick(p: Prediction): { side: '1' | '2'; line: number } | undefined {
+  try { const o = pickOptions(p).others.find(x => x.kind === 'hdpFav' || x.kind === 'hdpDog'); return o?.side && o.line !== undefined ? { side: o.side, line: o.line } : undefined; } catch { return undefined; }
+}
+
 /** Kumpulkan sampel: prediksi (history) yang hasilnya sudah diketahui. Bila satu laga ada di beberapa file, ambil yang terbaru. */
 export function loadSamples(): Sample[] {
   const histDir = path.join(CFG.dataDir, 'history'), latest = new Map<number, { at: string; p: Prediction }>();
@@ -121,7 +158,7 @@ export function loadSamples(): Sample[] {
     if (!sc || !p.probs) continue;
     const pick = (p.picks?.pick1x2 ?? 'X') as Out, mk = p.market;
     out.push({
-      id: p.id, ts: p.timestamp, home: p.home.name, away: p.away.name, pick, out: outcome(sc[0], sc[1]), goals: sc,
+      id: p.id, ts: p.timestamp, league: p.league?.name, hdp: hdpPick(p), home: p.home.name, away: p.away.name, pick, out: outcome(sc[0], sc[1]), goals: sc,
       probs: p.probs, raw: p.rawProbs ?? p.probs, model: p.modelProbs, market: mk ? { home: mk.home, draw: mk.draw, away: mk.away } : undefined,
       conf: p.confidence, level: p.confidenceLevel, pOver25: p.ou?.[1]?.over ?? 0.5, pBtts: p.btts?.yes ?? 0.5,
       aiAgree: p.aiOpinion ? p.aiOpinion.agree : undefined, aiPick: p.aiOpinion?.pick, aiBtts: p.aiOpinion?.btts, aiOu: p.aiOpinion?.ou25, aiHdp: p.aiOpinion?.hdp,
