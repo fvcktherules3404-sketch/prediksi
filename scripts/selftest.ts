@@ -281,6 +281,159 @@ import { buildTable } from './run.ts';
 }
 console.log('stakes OK');
 
+// --- v5: konteks laga (final, derbi, leg 2, kelelahan, grup timnas, juara/degradasi pasti) ---
+import { isFinalRound, isDerby, fatigueScore, restInfo, fatigueMultipliers, aggregateBeforeLeg2, leg2Multipliers, parseGroups, groupState, buildContext, isKnockoutRound, legKey } from './context.ts';
+{
+  assert(isFinalRound('Final') && !isFinalRound('Semi-finals') && !isFinalRound('Quarter-finals') && !isFinalRound('3rd Place Final') && !isFinalRound('Regular Season - 3'));
+  assert(isDerby('Inter', 'AC Milan') && isDerby('Manchester City', 'Manchester United') && isDerby('Persib Bandung', 'Persija Jakarta') && isDerby('Real Madrid', 'Barcelona'));
+  assert(!isDerby('Inter Miami', 'AC Milan') && !isDerby('Manchester City', 'Chelsea') && !isDerby('Arsenal', 'Arsenal'), 'derbi harus cocok persis');
+  // kelelahan
+  assert.equal(fatigueScore(null), null); assert.equal(fatigueScore(7), 0); assert.equal(fatigueScore(2), 1); assert(fatigueScore(3.5)! > 0.3 && fatigueScore(3.5)! < 0.5); assert.equal(fatigueScore(5, 3), 0.25);
+  const ts = 1e9, r = restInfo([ts - 3 * 86400, ts - 8 * 86400, ts + 100], ts); assert(Math.abs(r.rest! - 3) < 1e-9 && r.n10 === 2, 'laga masa depan diabaikan');
+  assert.equal(restInfo([], ts).rest, null);
+  const [fh, fa] = fatigueMultipliers(1, 0, 0.03); assert(fh < 1 && fa > 1 && Math.abs(fh * fa - 1) < 1e-12); assert.deepEqual(fatigueMultipliers(1, null, 0.03), [1, 1]); assert.deepEqual(fatigueMultipliers(1, 0, 0), [1, 1]);
+  // leg 2: leg 1 = A(kandang) 3-1 B  -> di leg 2 (B kandang) B tertinggal 2 => agregat untuk B = -2
+  const leg1 = { h: 10, a: 20, hg: 3, ag: 1, ts: ts - 7 * 86400 };
+  assert.equal(aggregateBeforeLeg2(leg1, 20, 10, ts), -2); assert.equal(aggregateBeforeLeg2(leg1, 10, 20, ts), null, 'urutan sama = bukan leg 2'); assert.equal(aggregateBeforeLeg2(undefined, 20, 10, ts), null);
+  const [lh, la] = leg2Multipliers(-2, 0.05); assert(lh > 1 && la < 1, 'tertinggal menyerang lebih banyak');
+  assert(isKnockoutRound('Round of 16') && isKnockoutRound('Play-offs') && !isKnockoutRound('Regular Season - 4') && !isKnockoutRound('Group Stage - 2'));
+  assert.equal(legKey(1, 2026, 'Round of 16', 20, 10), legKey(1, 2026, 'Round of 16', 10, 20));
+  // grup timnas: 4 tim, sekali bertemu (G=3), 2 lolos. A 9 poin (3 laga) sudah lolos; D 0 poin setelah 3 laga sudah gugur.
+  const std = [[{ team: { id: 1 }, points: 9, group: 'A', all: { played: 3 } }, { team: { id: 2 }, points: 4, group: 'A', all: { played: 3 } }, { team: { id: 3 }, points: 3, group: 'A', all: { played: 3 } }, { team: { id: 4 }, points: 0, group: 'A', all: { played: 3 } }]];
+  const gt = parseGroups(1, std)[0]; assert.equal(gt.G, 3); assert.equal(gt.sure, 2);
+  assert.equal(groupState(gt, 1), 'through'); assert.equal(groupState(gt, 4), 'out');
+  // sebelum laga terakhir: peringkat 3 (3 poin, 2 laga tersisa? tidak: semua sudah 3 laga) -> pakai tabel lain untuk 'alive'
+  const std2 = [[{ team: { id: 1 }, points: 6, group: 'A', all: { played: 2 } }, { team: { id: 2 }, points: 4, group: 'A', all: { played: 2 } }, { team: { id: 3 }, points: 3, group: 'A', all: { played: 2 } }, { team: { id: 4 }, points: 1, group: 'A', all: { played: 2 } }]];
+  const g2 = parseGroups(1, std2)[0]; assert.equal(groupState(g2, 1), 'alive', 'seri poin dianggap belum pasti'); assert.equal(groupState(g2, 2), 'alive'); assert.equal(groupState(g2, 4), 'alive');
+  // deskripsi API: 1 slot langsung + 1 playoff -> gugur baru pasti bila 2 tim di atas poin maksimumnya
+  const std3 = [[{ team: { id: 1 }, points: 9, group: 'B', description: 'Promotion - World Cup', all: { played: 3 } }, { team: { id: 2 }, points: 6, group: 'B', description: 'Play-offs', all: { played: 3 } }, { team: { id: 3 }, points: 3, group: 'B', all: { played: 3 } }, { team: { id: 4 }, points: 0, group: 'B', all: { played: 3 } }]];
+  const g3 = parseGroups(32, std3)[0]; assert(g3.sure === 1 && g3.maybe === 2 && g3.G === 6, 'kualifikasi kandang-tandang: G = 6');
+  // buildContext: semua sakelar, tag, faktor keyakinan
+  const base = { leagueId: 2, season: 2026, round: 'Final', ts, home: { id: 10, name: 'Inter', recent: [ts - 2 * 86400] }, away: { id: 20, name: 'AC Milan', recent: [ts - 7 * 86400] } };
+  const cfgF = { ...CFG, ctxFatigueRel: 0.03 }, c = buildContext(base, cfgF)!; const kinds = c.tags.map(t => t.kind).sort();
+  assert.deepEqual(kinds, ['derby', 'fatigue', 'final']); assert(c.confFactor < 0.9 && c.mul.home < c.mul.away, 'final+derbi memotong keyakinan; kelelahan menekan tim yang capek');
+  assert.equal(CFG.ctxFatigueRel, 0, 'default: kelelahan hanya label'); assert.equal(buildContext(base)!.mul.home * buildContext(base)!.mul.away, buildContext(base)!.mul.home * buildContext(base)!.mul.away);
+  assert.equal(buildContext({ ...base, round: 'Regular Season - 3', home: { id: 1, name: 'Foo' }, away: { id: 2, name: 'Bar' } }), null, 'tanpa konteks -> null');
+  const off = { ...CFG, ctxFatigue: false, ctxFinal: false, ctxDerby: false }; assert.equal(buildContext(base, off), null, 'sakelar mati');
+  const cg = buildContext({ leagueId: 1, season: 2026, round: 'Group Stage - 3', ts, home: { id: 1, name: 'A' }, away: { id: 4, name: 'D' }, group: gt })!;
+  assert(cg.info.group?.home === 'through' && cg.info.group?.away === 'out' && cg.tags.some(t => t.kind === 'group'));
+  assert(cg.confFactor === 1 && cg.mul.home !== 1 && Math.abs(cg.mul.home * cg.mul.away - 1) < 1e-9, 'lolos vs gugur: efek relatif, total dijaga');
+  // engine: pengali & faktor keyakinan terpasang
+  const fxC = { fixture: { id: 5, timestamp: ts }, league: { id: 2, name: 'X', season: 2026, round: 'Final' }, teams: { home: { id: 10, name: 'Inter' }, away: { id: 20, name: 'AC Milan' } } };
+  const rowC = (rank: number) => ({ rank, form: 'WDLWD', all: { played: 30, goals: { for: 45, against: 40 } }, home: { played: 15, goals: { for: 24, against: 19 } }, away: { played: 15, goals: { for: 21, against: 21 } } });
+  const lgC = leagueAverages([rowC(1), rowC(2)]), p0 = buildPrediction(fxC, rowC(3), rowC(4), lgC), p1 = buildPrediction(fxC, rowC(3), rowC(4), lgC, null, null, { ctx: c });
+  assert(p1.context && p1.context.tags.length === 3 && p1.conf!.comp < 0.9 && p1.confidence <= p0.confidence, 'keyakinan dipotong');
+  assert.equal(p0.context, undefined, 'tanpa ctx -> tanpa field context');
+}
+// juara & degradasi yang sudah pasti (stakes.ts)
+{
+  const pts = [80, 60, 55, 50, 48, 45, 44, 42, 41, 40, 39, 38, 37, 36, 35, 34, 30, 22, 15, 10]; // 20 tim, 38 laga, semua main 34 -> 4 laga tersisa (maks 12 poin)
+  const all = pts.map(p => ({ pts: p, p: 34 }));
+  const c = tableCtx(all, { pts: 80, p: 34 }, { pts: 10, p: 34 }, 20, 38);
+  assert.equal(c.rem, 4);
+  assert.equal(situation(c, 'home').kind, 'champion'); assert.equal(situation(c, 'home').need, 0); assert.equal(situation(c, 'home').label, 'Sudah juara');
+  assert.equal(situation(c, 'away').kind, 'relegated', 'degradasi pasti: 10 + 12 = 22 < 30 (batas aman)');
+  const c2 = tableCtx(all, { pts: 68, p: 34 }, { pts: 60, p: 34 }, 20, 38); // rank 2 (bukan pemuncak) -> tidak mungkin 'sudah juara'
+  assert.notEqual(situation(c2, 'home').kind, 'champion');
+}
+{
+  // results.ts: jeda antar-laga & leg pertama laga gugur tercatat
+  const res = emptyResults(), mk = (id: number, h: number, a: number, hg: number, ag: number, ts: number, round: string) => ({ fixture: { id, timestamp: ts, status: { short: 'FT' } }, league: { id: 2, season: 2026, round }, teams: { home: { id: h, name: 'H' + h }, away: { id: a, name: 'A' + a } }, goals: { home: hg, away: ag }, score: { fulltime: { home: hg, away: ag } } });
+  assert(addFixture(res, mk(101, 10, 20, 3, 1, 1e9, 'Round of 16')));
+  assert.deepEqual(res.recent![10], [1e9]); assert.deepEqual(res.recent![20], [1e9]);
+  const lk = legKey(2, 2026, 'Round of 16', 20, 10); assert.deepEqual(res.legs![lk], { h: 10, a: 20, hg: 3, ag: 1, ts: 1e9 });
+  assert(addFixture(res, mk(102, 20, 10, 0, 0, 1e9 + 7 * 86400, 'Round of 16'))); assert.equal(res.legs![lk].hg, 3, 'leg pertama tidak ditimpa leg kedua');
+  assert.equal(aggregateBeforeLeg2(res.legs![lk], 20, 10, 1e9 + 8 * 86400), -2);
+  assert(addFixture(res, mk(103, 10, 30, 1, 0, 1e9 + 9 * 86400, 'Regular Season - 4'))); assert.equal(Object.keys(res.legs!).length, 1, 'liga biasa tidak masuk daftar leg');
+  for (let i = 0; i < 6; i++) addFixture(res, mk(200 + i, 10, 40 + i, 1, 1, 1e9 + (10 + i) * 86400, 'Regular Season - 5')); assert.equal(res.recent![10].length, CFG.recentKeep, 'riwayat dibatasi');
+}
+console.log('context OK');
+
+// --- v6: konteks laga dari AI (validasi ketat, efek terbatas, cache) ---
+import { validateAiCtx, evidenceSupported, scoreIn, sideOfTeam, matchImportance, ctxHint, tableKnown, aiCtxCount } from './aiContext.ts';
+import { aiTeamEffect } from './context.ts';
+import { aiAbsences } from './news.ts';
+{
+  const hit = (host: string, content: string) => ({ title: 'x', url: `https://${host}/a`, content });
+  const H = [hit('a.com', 'Feyenoord beat Ajax 3-1 in the first leg at De Kuip and lead the tie ahead of the return in Amsterdam'), hit('b.com', 'Ajax boss says he will rotate heavily for the return leg with several starters rested and a reserve squad expected'), hit('c.com', 'Ajax coach confirmed heavy rotation for the second leg and youngsters will start the match')];
+  const o = { home: 'Ajax', away: 'Feyenoord', round: 'Round of 16' };
+  assert(evidenceSupported('he will rotate heavily for the return leg with several starters rested', H[1].content) && !evidenceSupported('Feyenoord already won the league title this season', H[1].content) && !evidenceSupported('too short', H[1].content), 'bukti harus didukung teks sumber');
+  assert(scoreIn('won 3-1 at home', 1, 3) && scoreIn('won 3 – 1', 3, 1) && !scoreIn('won 3-1', 2, 1));
+  assert.equal(sideOfTeam('Feyenoord', 'Ajax', 'Feyenoord'), 'away'); assert.equal(sideOfTeam('Ajax Amsterdam', 'Ajax', 'Feyenoord'), 'home'); assert.equal(sideOfTeam('Inter', 'Inter Miami', 'Inter'), null, 'ambigu -> null'); assert.equal(sideOfTeam('Napoli', 'Ajax', 'Feyenoord'), null);
+  const good = { sig: [
+    { team: 'home', kind: 'rotation', value: 'heavy', s: [2, 3], ev: 'he will rotate heavily for the return leg with several starters rested' },
+    { team: 'away', kind: 'status', value: 'champion', s: [1], ev: 'Feyenoord already won the league title this season' },          // karangan -> dibuang
+    { team: 'away', kind: 'rotation', value: 'heavy', s: [9], ev: 'coach will rotate heavily for the return leg' },                     // sumber tidak ada -> dibuang
+    { team: 'away', kind: 'foo', value: 'x', s: [1], ev: 'Feyenoord beat Ajax 3-1 in the first leg at De Kuip' },                       // kind tak dikenal -> dibuang
+    { team: 'home', kind: 'rotation', value: 'some', s: [2], ev: 'he will rotate heavily for the return leg with several starters rested' }, // duplikat (team,kind) -> dibuang
+  ], leg1: { home_team: 'Feyenoord', score: '3-1', s: [1], ev: 'Feyenoord beat Ajax 3-1 in the first leg at De Kuip' }, derby: { s: [1], ev: 'Feyenoord beat Ajax 3-1 in the first leg at De Kuip' } };
+  const v = validateAiCtx(good, H, o)!;
+  assert.equal(v.sigs.length, 1); assert.equal(v.sigs[0].value, 'heavy'); assert.equal(v.nSrc, 3);
+  assert.deepEqual(v.leg1 && { hg: v.leg1.hg, ag: v.leg1.ag }, { hg: 1, ag: 3 }, 'Feyenoord tuan rumah leg 1 menang 3-1 -> Ajax (kandang kini) mencetak 1, Feyenoord 3');
+  assert.equal(v.derby, undefined, 'Ajax-Feyenoord sudah ada di daftar derbi sistem -> tidak diambil dari AI');
+  // rotasi berat dari 1 situs saja -> turun jadi "sebagian"
+  assert.equal(validateAiCtx({ sig: [{ team: 'home', kind: 'rotation', value: 'heavy', s: [2], ev: 'he will rotate heavily for the return leg with several starters rested' }] }, H, o)!.sigs[0].value, 'some');
+  // sumber kurang dari minimum / masukan bukan objek -> null
+  assert.equal(validateAiCtx(good, H.slice(0, 1), o), null); assert.equal(validateAiCtx('abc', H, o), null); assert.equal(validateAiCtx(null, H, o), null);
+  // leg 1: skor tidak ada di teks sumber, nama tim ambigu, sistem sudah punya leg 1, atau bukan babak gugur -> dibuang
+  const L = (l: any, oo: any = o) => validateAiCtx({ sig: [], leg1: l }, H, oo)!.leg1;
+  const l1 = { home_team: 'Feyenoord', score: '3-1', s: [1], ev: 'Feyenoord beat Ajax 3-1 in the first leg at De Kuip' };
+  assert(L(l1)); assert.equal(L({ ...l1, score: '4-1' }), undefined); assert.equal(L({ ...l1, home_team: 'Napoli' }), undefined); assert.equal(L(l1, { ...o, hasLeg1: true }), undefined);
+  assert.equal(L(l1, { ...o, round: 'Regular Season - 4' }), undefined); assert.equal(L(l1, { ...o, round: 'Final' }), undefined); assert.equal(L({ ...l1, ev: 'Feyenoord beat Ajax in the first leg at De Kuip' }), undefined, 'bukti harus memuat skor');
+  // derbi dari AI: perlu kata derbi/rivalitas di kutipan yang didukung sumber
+  const HD = [hit('a.com', 'The local derby between Alpha and Beta always brings a tense atmosphere in the city'), hit('b.com', 'Beta face their big rivals Alpha this weekend')];
+  assert(validateAiCtx({ sig: [], derby: { s: [1], ev: 'The local derby between Alpha and Beta always brings a tense atmosphere' } }, HD, { home: 'Alpha', away: 'Beta' })!.derby);
+  assert.equal(validateAiCtx({ sig: [], derby: { s: [1], ev: 'between Alpha and Beta always brings a tense atmosphere in the city' } }, HD, { home: 'Alpha', away: 'Beta' })!.derby, undefined);
+
+  // efek: hanya menurunkan, dibatasi, tidak dihitung dua kali, skala 0 = tanpa efek
+  const ai = validateAiCtx({ sig: [
+    { team: 'home', kind: 'rotation', value: 'heavy', s: [2, 3], ev: 'he will rotate heavily for the return leg with several starters rested' },
+    { team: 'home', kind: 'status', value: 'qualified', s: [3], ev: 'Ajax coach confirmed heavy rotation for the second leg and youngsters will start' },
+    { team: 'home', kind: 'fatigue', value: 'tired', s: [3], ev: 'youngsters will start the match Ajax coach confirmed heavy rotation' },
+  ] }, H, o)!;
+  assert.equal(ai.sigs.length, 3);
+  const e1 = aiTeamEffect(ai, 'home', false); assert(e1.w > 0 && e1.w <= CFG.ctxAiMaxXg + 1e-12 && e1.conf, 'dibatasi'); assert.equal(aiTeamEffect(ai, 'away', false).w, 0);
+  const e2 = aiTeamEffect(ai, 'home', true); assert(e2.w < e1.w && !e2.parts.includes('sudah lolos'), 'tabel/grup sudah menilai motivasi -> status AI diabaikan, rotasi setengah');
+  assert.equal(aiTeamEffect(ai, 'home', false, { ...CFG, ctxAiScale: 0 }).w, 0);
+  // buildContext dengan AI
+  const base6 = { leagueId: 2, season: 2026, round: 'Round of 16', ts: 1e9, home: { id: 301, name: 'Ajax' }, away: { id: 300, name: 'Feyenoord' } };
+  const c6 = buildContext({ ...base6, ai })!;
+  const c6n = buildContext(base6)!, aiConf = c6.confFactor / c6n.confFactor; // Ajax-Feyenoord = derbi sistem (x0,93) -> bandingkan faktor AI saja
+  assert(c6.mul.home < 1 && c6.mul.away === 1 && aiConf < 1 && aiConf >= CFG.ctxAiConfMin - 1e-12 && c6.tags.some(t => t.kind === 'ai' && t.ai), 'AI menurunkan xG tim yang merotasi & memotong keyakinan sedikit');
+  assert(c6.mul.home >= Math.exp(-CFG.ctxAiMaxXg) - 1e-9, 'penurunan dibatasi'); assert.equal(c6.info.ai?.nSrc, 3);
+  const cL = buildContext({ ...base6, ai: v })!; // leg 1 dari AI: Ajax 1 - 3 Feyenoord -> agregat kandang = -2 -> Ajax menyerang lebih banyak, dipercaya 70%
+  assert.equal(cL.info.aggHome, -2); assert.equal(cL.info.aggSrc, 'ai'); assert(cL.tags.some(t => t.kind === 'leg2' && t.ai));
+  const own = buildContext({ ...base6, leg1: { h: 300, a: 301, hg: 3, ag: 1, ts: 1e9 - 7 * 86400 }, ai: v })!;
+  assert.equal(own.info.aggSrc, 'own', 'catatan sendiri didahulukan dari AI'); assert(cL.mul.home > 1 && cL.mul.home < own.mul.home, 'AI dipercaya sebagian');
+  const cOff = buildContext({ ...base6, ai }, { ...CFG, ctxAi: false })!; assert(!cOff.tags.some(t => t.ai) && cOff.mul.home === 1 && cOff.info.ai === undefined, 'AI_CONTEXT=false -> tanpa efek AI (derbi sistem tetap)');
+  const cLbl = buildContext({ ...base6, ai }, { ...CFG, ctxAiScale: 0 })!; assert(cLbl.mul.home === 1 && cLbl.confFactor === c6n.confFactor && cLbl.tags.some(t => t.ai), 'skala 0 = label saja (xG & keyakinan sama seperti tanpa AI)');
+  const cKn = buildContext({ ...base6, ai, tableKnown: { home: true, away: false } })!; assert(cKn.mul.home > c6.mul.home, 'tabel sudah menilai -> efek AI lebih kecil');
+  const dAi = buildContext({ leagueId: 1, season: 1, round: 'Regular Season - 3', ts: 1e9, home: { id: 1, name: 'Alpha' }, away: { id: 2, name: 'Beta' }, ai: validateAiCtx({ sig: [], derby: { s: [1], ev: 'The local derby between Alpha and Beta always brings a tense atmosphere' } }, HD, { home: 'Alpha', away: 'Beta' })! })!;
+  assert(dAi.tags[0].kind === 'derby' && dAi.tags[0].ai && dAi.confFactor === CFG.ctxDerbyConf && dAi.mul.home === 1);
+  assert.equal(aiCtxCount(v), 2); assert(matchImportance({ league: { id: 2, round: 'Final' }, teams: { home: { name: 'A' }, away: { name: 'B' } } }) > matchImportance({ league: { id: 999, round: 'Regular Season - 3' }, teams: { home: { name: 'A' }, away: { name: 'B' } } }));
+  assert(/Leg 1 BELUM tercatat/.test(ctxHint({ league: { round: 'Round of 16' }, teams: { home: { name: 'A' }, away: { name: 'B' } } }, null, null, false).text) && ctxHint({ league: { round: 'Round of 16' }, teams: { home: { name: 'A' }, away: { name: 'B' } } }, null, null, true).hasLeg1);
+  assert.deepEqual(tableKnown(null), { home: false, away: false });
+
+  // aiAbsences: konteks divalidasi SEBELUM disimpan ke cache; pembacaan dari cache tetap membawa konteks (tanpa panggilan Gemini kedua)
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-')), oldDir = CFG.cacheDir, realFetch = globalThis.fetch; let gemCalls = 0, tavCalls = 0;
+  CFG.cacheDir = tmp; process.env.TAVILY_API_KEY = 'tv';
+  globalThis.fetch = (async (u: any) => {
+    const url = String(u);
+    if (url.includes('tavily')) { tavCalls++; return new Response(JSON.stringify({ results: H.map(h => ({ title: h.title, url: h.url, content: h.content })) })); }
+    gemCalls++; return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify([{ id: 7001, home: [], away: [], ctx: good }]) }] } }] }));
+  }) as any;
+  try {
+    const fx7 = { fixture: { id: 7001, date: '2026-09-30T19:00:00Z', timestamp: 1e9 }, league: { id: 2, name: 'UCL', round: 'Round of 16', season: 2026 }, teams: { home: { id: 301, name: 'Ajax' }, away: { id: 300, name: 'Feyenoord' } } };
+    const hints = new Map([[7001, ctxHint(fx7, null, null, false)]]);
+    const r1 = await aiAbsences('k', [fx7], new Map(), hints), r2 = await aiAbsences('k', [fx7], new Map(), hints);
+    assert.equal(gemCalls, 1, 'panggilan kedua dari cache'); assert.equal(tavCalls, 1);
+    for (const r of [r1, r2]) { const c = r.ctx.get(7001)!; assert(c && c.sigs.length === 1 && c.leg1 && c.leg1.hg === 1 && c.nSrc === 3, 'konteks lolos validasi dan tetap ada setelah dibaca dari cache'); }
+    assert.equal(r2.nCtx, 1);
+    const off = { ...CFG }; CFG.ctxAi = false; const r3 = await aiAbsences('k', [{ ...fx7, fixture: { ...fx7.fixture, id: 7002 } }], new Map()); CFG.ctxAi = off.ctxAi; assert.equal(r3.ctx.size, 0, 'AI_CONTEXT=false -> tanpa konteks');
+  } finally { globalThis.fetch = realFetch; CFG.cacheDir = oldDir; delete process.env.TAVILY_API_KEY; }
+}
+console.log('konteks AI OK');
+
 {
   // multi-key: key 1 habis (batas harian) -> pindah ke key 2; semua habis -> null
   assert.deepEqual(readApiKeys({ FOOTBALL_API_KEY: 'a', FOOTBALL_API_KEY_2: 'b', FOOTBALL_API_KEY_3: '', FOOTBALL_API_KEYS: 'b, c' }), ['a', 'b', 'c']);

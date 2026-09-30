@@ -85,7 +85,7 @@ export async function addAiOpinions(preds: Prediction[], key: string | undefined
       for (const p of batch) {
         const hits = await searchMatch({ id: p.id, home: p.home.name, away: p.away.name });
         if (!hits.length) continue; // tanpa sumber web -> laga ini dilewati
-        blocks.push(`### id ${p.id}: ${p.home.name} (kandang) vs ${p.away.name} (tandang), ${p.league.name} (${p.league.country}), kickoff ${p.kickoff}${p.stakes ? `\nKONTEKS TABEL (dari klasemen resmi, bukan dari SUMBER): ${p.home.name} = ${p.stakes.home.label}, ${p.away.name} = ${p.stakes.away.label}; musim berjalan ${Math.round(p.stakes.phase * 100)}%` : ''}\nSUMBER:\n${formatHits(hits)}`);
+        blocks.push(`### id ${p.id}: ${p.home.name} (kandang) vs ${p.away.name} (tandang), ${p.league.name} (${p.league.country}), kickoff ${p.kickoff}${p.context ? `\nKONTEKS LAGA (dihitung sistem): ${p.context.tags.map(t => t.label).join('; ')}` : ''}${p.stakes ? `\nKONTEKS TABEL (dari klasemen resmi, bukan dari SUMBER): ${p.home.name} = ${p.stakes.home.label}, ${p.away.name} = ${p.stakes.away.label}; musim berjalan ${Math.round(p.stakes.phase * 100)}%` : ''}\nSUMBER:\n${formatHits(hits)}`);
       }
     } catch (e) { out.error = (e as Error).message; console.warn('[opini-web] gagal:', out.error); break; }
     if (!blocks.length) continue;

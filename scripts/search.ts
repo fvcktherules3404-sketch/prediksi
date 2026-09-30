@@ -46,7 +46,7 @@ export function formatHits(hits: WebHit[], maxChars = 600): string {
 export async function searchMatch(m: { id: number; home: string; away: string }): Promise<WebHit[]> {
   const ck = `web_match_${m.id}`, c = readCache<WebHit[]>(CFG.cacheDir, ck);
   if (c && (Date.now() - c.ts) / 3.6e6 <= CFG.newsTtlH) return c.data;
-  const hits = await webSearch(`${m.home} vs ${m.away} team news injuries suspensions predicted lineup form`, { news: true, days: 7, max: 5 });
+  const hits = await webSearch(`${m.home} vs ${m.away} preview team news injuries suspensions predicted lineup rotation first leg aggregate form`, { news: true, days: 7, max: 5 });
   writeCache(CFG.cacheDir, ck, hits);
   return hits;
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { CFG } from './config.ts';
 import { scoreMatrix, matrixStats, expectedGoals, eloExpectedGoals, leagueAverages, decide1x2, geoBlend, temper, MAXG } from './engine.ts';
 import { devig } from './odds.ts';
+import { fatigueScore, restInfo, fatigueMultipliers } from './context.ts';
 import { type TableCtx, type StakeParams, tableCtx, stakeMultipliers, situation } from './stakes.ts';
 
 /** ===== BACKTEST WALK-FORWARD =====
@@ -70,7 +71,7 @@ export function loadCsv(file: string): Match[] {
 }
 
 // ---------------------------------------------------------------- Walk-forward: statistik klasemen + Elo
-interface Rec { sx?: TableCtx; t: number; neutral: boolean; out: 0 | 1 | 2; hg: number; ag: number; n: number; lg: { home: number; away: number }; xS: [number, number]; xN: [number, number]; ed: number; mkt?: T3; mktO25?: number }
+interface Rec { fH?: number | null; fA?: number | null; sx?: TableCtx; t: number; neutral: boolean; out: 0 | 1 | 2; hg: number; ag: number; n: number; lg: { home: number; away: number }; xS: [number, number]; xN: [number, number]; ed: number; mkt?: T3; mktO25?: number }
 interface TeamS { pts: number; p: number; gf: number; ga: number; hp: number; hgf: number; hga: number; ap: number; agf: number; aga: number; form: string }
 const blank = (): TeamS => ({ pts: 0, p: 0, gf: 0, ga: 0, hp: 0, hgf: 0, hga: 0, ap: 0, agf: 0, aga: 0, form: '' });
 const toRow = (s: TeamS, noForm = false) => ({ form: noForm ? '' : s.form, all: { played: s.p, goals: { for: s.gf, against: s.ga } }, home: { played: s.hp, goals: { for: s.hgf, against: s.hga } }, away: { played: s.ap, goals: { for: s.agf, against: s.aga } } });
@@ -78,7 +79,7 @@ const toRow = (s: TeamS, noForm = false) => ({ form: noForm ? '' : s.form, all: 
 export function walkForward(matches: Match[], warmup: number): Rec[] {
   const ms = [...matches].sort((a, b) => a.t - b.t);
   const stand = new Map<string, Map<string, TeamS>>(), tot = new Map<string, { hg: number; hp: number; ag: number; ap: number }>();
-  const elo = new Map<string, number>(), cnt = new Map<string, number>(), seenGroup = new Set<string>();
+  const elo = new Map<string, number>(), cnt = new Map<string, number>(), seenGroup = new Set<string>(), hist = new Map<string, number[]>(); // hist: waktu (detik) laga terakhir tiap tim, untuk jeda/kelelahan
   const recs: Rec[] = [], HA = 60;
   // Pra-hitung ukuran tiap grup (liga-musim): jumlah tim & jumlah laga per tim (dipakai untuk fase musim / situasi tabel)
   const gTeams = new Map<string, Set<string>>(), gGames = new Map<string, Map<string, number>>();
@@ -98,7 +99,8 @@ export function walkForward(matches: Match[], warmup: number): Rec[] {
       const kH = `${m.leagueKey}|${m.home}`, kA = `${m.leagueKey}|${m.away}`, eh = elo.get(kH) ?? 1500, ea = elo.get(kA) ?? 1500;
       if (Math.min(cnt.get(kH) ?? 0, cnt.get(kA) ?? 0) >= warmup) {
         const s = expectedGoals(toRow(H), toRow(A), lg), s0 = expectedGoals(toRow(H, true), toRow(A, true), lg);
-        recs.push({ t: m.t, neutral: !!m.neutral, out: m.hg > m.ag ? 0 : m.hg === m.ag ? 1 : 2, hg: m.hg, ag: m.ag, n: s.minGames, lg, xS: [s.lh, s.la], xN: [s0.lh, s0.la], ed: eh - ea, mkt: m.mkt, mktO25: m.mktO25, sx: m.intl ? undefined : (() => { const gi = gInfo(m.group); return gi.N >= 8 && gi.G === 2 * (gi.N - 1) ? tableCtx([...g.values()], g.get(m.home) ?? blank(), g.get(m.away) ?? blank(), gi.N, gi.G) : undefined; })() });
+        const rH = m.intl ? null : restInfo(hist.get(kH), m.t / 1000), rA = m.intl ? null : restInfo(hist.get(kA), m.t / 1000);
+        recs.push({ fH: rH ? fatigueScore(rH.rest, rH.n10) : null, fA: rA ? fatigueScore(rA.rest, rA.n10) : null, t: m.t, neutral: !!m.neutral, out: m.hg > m.ag ? 0 : m.hg === m.ag ? 1 : 2, hg: m.hg, ag: m.ag, n: s.minGames, lg, xS: [s.lh, s.la], xN: [s0.lh, s0.la], ed: eh - ea, mkt: m.mkt, mktO25: m.mktO25, sx: m.intl ? undefined : (() => { const gi = gInfo(m.group); return gi.N >= 8 && gi.G === 2 * (gi.N - 1) ? tableCtx([...g.values()], g.get(m.home) ?? blank(), g.get(m.away) ?? blank(), gi.N, gi.G) : undefined; })() });
       }
     }
     // 2) baru sesudah itu perbarui statistik dan Elo
@@ -112,6 +114,7 @@ export function walkForward(matches: Match[], warmup: number): Rec[] {
       const kH = `${m.leagueKey}|${m.home}`, kA = `${m.leagueKey}|${m.away}`, eh = elo.get(kH) ?? 1500, ea = elo.get(kA) ?? 1500;
       const ha = m.intl ? (m.neutral ? 0 : 100) : HA, exp = 1 / (1 + Math.pow(10, -(eh - ea + ha) / 400)), S = m.hg > m.ag ? 1 : m.hg === m.ag ? 0.5 : 0, gd = Math.abs(m.hg - m.ag);
       const K = (m.kBase ?? 20) * (gd <= 1 ? 1 : gd === 2 ? 1.5 : (11 + gd) / 8), d = K * (S - exp);
+      for (const k of [kH, kA]) hist.set(k, [...(hist.get(k) ?? []), m.t / 1000].slice(-6));
       elo.set(kH, eh + d); elo.set(kA, ea - d); cnt.set(kH, (cnt.get(kH) ?? 0) + 1); cnt.set(kA, (cnt.get(kA) ?? 0) + 1);
     }
   }
@@ -119,15 +122,15 @@ export function walkForward(matches: Match[], warmup: number): Rec[] {
 }
 
 // ---------------------------------------------------------------- Model dan metrik
-interface Par { st?: StakeParams; slope: number; K: number; rho: number; draw: number; spread: number; w: number; tau: number; useForm: boolean; mode: 'std' | 'elo' | 'comb' }
+interface Par { fat?: number; st?: StakeParams; slope: number; K: number; rho: number; draw: number; spread: number; w: number; tau: number; useForm: boolean; mode: 'std' | 'elo' | 'comb' }
 const P0: Par = { slope: CFG.eloSlope, K: CFG.eloShrinkK, rho: CFG.rho, draw: CFG.drawBoost, spread: CFG.tempoSpread, w: 0, tau: 1, useForm: true, mode: 'comb' };
 const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
 
 function xgOf(r: Rec, p: Par): [number, number] {
-  const [a, b] = xgBase(r, p);
-  if (!p.st || !r.sx) return [a, b];
-  const m = stakeMultipliers(r.sx, p.st);
-  return [clamp(a * m.home, 0.2, 4.5), clamp(b * m.away, 0.2, 4.5)];
+  let [a, b] = xgBase(r, p);
+  if (p.st && r.sx) { const m = stakeMultipliers(r.sx, p.st); a = clamp(a * m.home, 0.2, 4.5); b = clamp(b * m.away, 0.2, 4.5); }
+  if (p.fat && r.fH !== undefined && r.fH !== null && r.fA !== undefined && r.fA !== null) { const [x, y] = fatigueMultipliers(r.fH, r.fA, p.fat); a = clamp(a * x, 0.2, 4.5); b = clamp(b * y, 0.2, 4.5); }
+  return [a, b];
 }
 function xgBase(r: Rec, p: Par): [number, number] {
   const s = p.useForm ? r.xS : r.xN;
@@ -159,6 +162,31 @@ const pct = (x: number) => (Number.isFinite(x) ? (100 * x).toFixed(1) + '%' : '-
 function argmin<T>(items: T[], f: (x: T) => number): T { let b = items[0], bv = Infinity; for (const it of items) { const v = f(it); if (v < bv) { bv = v; b = it; } } return b; }
 const range = (a: number, b: number, s: number) => { const o: number[] = []; for (let x = a; x <= b + 1e-9; x += s) o.push(Math.round(x * 1e4) / 1e4); return o; };
 
+
+/** I. Kelelahan (jeda antar-laga): efek pada xG diuji pada laga klub yang kedua timnya punya riwayat jeda. Parameter dipilih di set latih, diuji di set uji. */
+function fatigueSection(recs: Rec[], rep: any) {
+  const ok = recs.filter(r => r.fH !== undefined && r.fH !== null && r.fA !== undefined && r.fA !== null);
+  console.log('\nI. Kelelahan / jadwal padat (jeda hari antar-laga, laga klub saja; ' + ok.length + ' laga dengan data jeda kedua tim):');
+  rep.fatigue = { n: ok.length };
+  if (ok.length < 1500) { console.log('   Data < 1500 laga, dilewati.'); return; }
+  const cutI = Math.floor(ok.length * SPLIT), trI = ok.slice(0, cutI), teI = ok.slice(cutI);
+  const spread = ok.filter(r => Math.abs((r.fH as number) - (r.fA as number)) >= 0.4).length;
+  console.log(`   Laga dengan selisih kelelahan >= 0.4: ${spread} (${pct(spread / ok.length)}). Bila sedikit, uji ini kurang bertenaga.`);
+  const bin = (q: number, y: boolean) => -Math.log(clamp(y ? q : 1 - q, 1e-6, 1)), o25 = (r: Rec, p: Par) => matrixStats(matrixOf(r, p)).o25;
+  const cand = [0, 0.01, 0.02, 0.03, 0.05, 0.08, 0.12];
+  const best = argmin(cand, f => meanLL(trI, r => probs(r, { ...P0, fat: f })));
+  if (best === 0) console.log('   (set latih memilih efek 0: tidak ada bukti bahwa jeda antar-laga memengaruhi hasil)');
+  const dOne = paired(teI, r => probs(r, { ...P0, fat: best }), r => probs(r, P0)), dCfg = paired(teI, r => probs(r, { ...P0, fat: CFG.ctxFatigueRel }), r => probs(r, P0));
+  const d = teI.map(r => bin(o25(r, { ...P0, fat: best }), r.hg + r.ag >= 3) - bin(o25(r, P0), r.hg + r.ag >= 3)), mu = mean(d), se = Math.sqrt(mean(d.map(x => (x - mu) ** 2)) * d.length / Math.max(1, d.length - 1)) / Math.sqrt(d.length);
+  console.log(`   Terbaik di set latih: ctxFatigueRel ${best} (default aplikasi ${CFG.ctxFatigueRel})`);
+  console.log(`   Set uji 1X2 (terbaik)      : ${f4(meanLL(teI, r => probs(r, P0)))} -> ${f4(meanLL(teI, r => probs(r, { ...P0, fat: best })))} (selisih ${dOne.d.toFixed(4)} ± ${(1.96 * dOne.se).toFixed(4)}: ${verdict(dOne).replace('A', 'dengan efek').replace('B', 'tanpa')})`);
+  console.log(`   Set uji 1X2 (default ${CFG.ctxFatigueRel})   : selisih ${dCfg.d.toFixed(4)} ± ${(1.96 * dCfg.se).toFixed(4)}: ${verdict(dCfg).replace('A', 'dengan efek').replace('B', 'tanpa')}`);
+  console.log(`   Set uji Over 2.5 (terbaik) : selisih ${mu.toFixed(4)} ± ${(1.96 * se).toFixed(4)} (+ = lebih buruk)`);
+  const helps = Math.abs(dCfg.d) >= 1.96 * dCfg.se && dCfg.d < 0;
+  console.log(`   Kesimpulan I: ${helps ? 'efek default memperbaiki log-loss uji secara nyata -> pertahankan CTX_FATIGUE' : dCfg.d > 0 && Math.abs(dCfg.d) >= 1.96 * dCfg.se ? 'efek default MEMPERBURUK secara nyata -> set CTX_FATIGUE=false' : 'belum berbeda nyata -> efek kecil; boleh dibiarkan atau dimatikan (CTX_FATIGUE=false). Tag di kartu tetap informatif.'}`);
+  rep.fatigue = { n: ok.length, best, testOne: dOne, testDefault: dCfg, helps };
+}
+
 // ---------------------------------------------------------------- Main
 export function runBacktest(matches: Match[]) {
   const recs = walkForward(matches, WARMUP);
@@ -170,6 +198,8 @@ export function runBacktest(matches: Match[]) {
   console.log(`\nLaga dinilai: ${recs.length} (latih ${train.length}, uji ${test.length}) | ber-odds: ${withMkt(recs).length} | warm-up ${WARMUP} laga/tim | odds ${CLOSING ? 'PENUTUPAN' : 'pra-penutupan'}`);
   console.log(`Periode: ${new Date(recs[0].t).toISOString().slice(0, 10)} s/d ${new Date(recs[recs.length - 1].t).toISOString().slice(0, 10)}   (log-loss acak = 1.0986; makin kecil makin baik)`);
   if (recs.length < 1500) console.log('PERINGATAN: sampel < 1500, hasil tuning bisa kebetulan. Tambah musim/liga.');
+
+  if (args.fatigueOnly) { fatigueSection(recs, rep); return rep; }
 
   // --- A. Baseline dan perbandingan model (parameter default) ---
   const freq: T3 = [0, 1, 2].map(o => (train.filter(r => r.out === o).length + 1) / (train.length + 3)) as T3;
@@ -296,6 +326,8 @@ export function runBacktest(matches: Match[]) {
     console.log(`   Kesimpulan H: ${helps ? 'penyesuaian memperbaiki log-loss uji secara nyata -> boleh diaktifkan (CFG.stakes*)' : 'belum berbeda nyata -> biarkan CFG.stakesOn=false (label situasi tetap ditampilkan, xG tidak diubah)'}`);
     rep.stakes = { n: tab.length, best: bestSt, testOne: dOne, testOU: dOU, helps };
   } else console.log('   Data bertabel < 1500 laga, dilewati.');
+
+  fatigueSection(recs, rep);
 
   // --- Rekomendasi ---
   const gain = -dT.d, sig = Math.abs(dT.d) >= 1.96 * dT.se && dT.d < 0;

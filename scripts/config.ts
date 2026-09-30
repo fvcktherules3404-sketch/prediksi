@@ -86,6 +86,26 @@ export const CFG = {
   stakesMinPhase: 0.25,                            // sebelum 25% musim, tabel belum bermakna -> tanpa label & tanpa penyesuaian
   // Liga domestik kandang-tandang penuh (G = 2 x (N-1) laga). Liga dengan babak lanjutan/split/playoff/konferensi sengaja tidak dimasukkan.
   stakesLeagues: new Set<number>([39, 140, 135, 78, 61, 88, 94, 203, 71, 307, 274]),
+  // --- v5: konteks laga (scripts/context.ts). Hanya kelelahan yang diuji backtest (bagian I); lainnya efek kecil & konservatif, BELUM tervalidasi. ---
+  ctxFatigue: env.CTX_FATIGUE !== 'false', ctxFatigueRel: Number(env.CTX_FATIGUE_REL ?? 0), // backtest I (27.927 laga klub): TIDAK ada pengaruh nyata (terbaik di set latih = 0) -> hanya label, xG tidak diubah. Isi mis. 0.03 lalu jalankan ulang backtest sebelum memakainya
+  ctxLeg2: env.CTX_LEG2 !== 'false', ctxLeg2K: Number(env.CTX_LEG2_K ?? 0.05),                    // per gol selisih agregat (dibatasi 2 gol)
+  ctxFinal: env.CTX_FINAL !== 'false', ctxFinalGoals: 0.04, ctxFinalConf: 0.9,                    // final: total gol -4%, keyakinan x0,9
+  ctxDerby: env.CTX_DERBY !== 'false', ctxDerbyConf: 0.93,                                        // derbi: hanya keyakinan yang dipotong
+  ctxGroup: env.CTX_GROUP !== 'false', ctxGroupRel: Number(env.CTX_GROUP_REL ?? 0.12), ctxDeadConf: 0.9, // grup timnas: sudah lolos/gugur -> rotasi; keduanya tanpa taruhan -> keyakinan x0,9
+  maxGroupStandings: 4,                                                                           // maks request klasemen grup timnas per run (1 request per turnamen/kualifikasi)
+  // Turnamen timnas yang punya fase grup. Persahabatan (10) dan turnamen gugur murni tidak diambil. Kualifikasi & Nations League dianggap kandang-tandang (G = 2 x (N-1)) = konservatif.
+  groupLeagues: new Set<number>([1, 4, 5, 6, 9, 22, 25, 29, 30, 31, 32, 33, 34, 35, 36, 1247]),
+  groupRounds: { 1: 1, 4: 1, 6: 1, 9: 1, 22: 1, 25: 1, 1247: 1 } as Record<number, number>,   // 1 = sekali bertemu (fase grup turnamen), lainnya kandang-tandang
+  groupSlots: { 1: 2, 4: 2, 6: 2, 9: 2, 22: 2, 25: 2, 1247: 2 } as Record<number, number>,   // slot lolos bila API tidak memberi deskripsi; tidak ada di sini -> default 2
+  // --- v6: konteks laga dari AI (scripts/aiContext.ts). Gemini membaca hasil Tavily yang sudah ada (tanpa kredit/panggilan tambahan) lalu melaporkan rotasi, motivasi, kelelahan nyata, skor leg 1, derbi.
+  //     Efek kecil & dibatasi; BELUM bisa di-backtest (tidak ada data historis). AI_CONTEXT=false mematikan; CTX_AI_SCALE=0 = hanya label (xG & keyakinan tidak berubah). ---
+  ctxAi: env.AI_CONTEXT !== 'false', ctxAiScale: Number(env.CTX_AI_SCALE ?? 1),
+  ctxAiMinSrc: 2,                                        // minimal sumber web agar sinyal AI dipercaya
+  ctxAiRotHeavy: 0.05, ctxAiRotSome: 0.02, ctxAiLowMotive: 0.03, ctxAiTired: 0.015, // penurunan ln-xG tim per sinyal
+  ctxAiMaxXg: 0.06,                                      // batas total penurunan ln-xG per tim (~ -5,8%)
+  ctxAiConfStep: 0.04, ctxAiConfMin: 0.92,               // tiap tim dengan rotasi besar / motivasi rendah memotong keyakinan 4% (min. x0,92)
+  ctxAiLegTrust: 0.7,                                    // skor leg 1 dari AI dipercaya 70% dibanding catatan sendiri (ctxLeg2K x 0,7)
+  recentKeep: 4, recentMaxAgeDays: 21,                                                            // riwayat waktu laga per tim (untuk jeda/kelelahan) di data/results.json
   // --- v2: keyakinan ---
   aiAgreeBonus: 4, aiDisagreePenalty: 8, // opini AI sepakat/beda dengan pick (kecil; dituning manual setelah melihat calibration.json -> ai)
   friendlyLeagues: new Set<number>([10, 667]), friendlyConfFactor: 0.85, // laga persahabatan: rotasi & motivasi acak -> keyakinan dipotong

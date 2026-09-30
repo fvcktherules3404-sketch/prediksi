@@ -3,7 +3,8 @@ import { CFG } from './config.ts';
 import { readCache, writeCache } from './cache.ts';
 import { geminiGenerate } from './geminiCall.ts';
 import { extractJsonArray } from './geminiStandings.ts';
-import { formatHits, hasSearch, searchMatch } from './search.ts';
+import { formatHits, hasSearch, searchMatch, type WebHit } from './search.ts';
+import { CTX_PROMPT, matchImportance, validateAiCtx, type AiCtx, type CtxHint } from './aiContext.ts';
 import type { FootballApi } from './footballApi.ts';
 
 export type AbsMap = Map<number, NonNullable<Prediction['absences']>>;
@@ -45,15 +46,16 @@ export async function apiInjuries(api: FootballApi, dates: string[]): Promise<Ma
 
 /** Berita cedera/skorsing/kondisi skuad: hasil pencarian web (Tavily) ditempel ke Gemini sebagai SUMBER, lalu Gemini meringkasnya
  *  ke JSON per laga. Laga tanpa hasil pencarian dilewati (tidak ada panggilan Gemini). Tervalidasi dan di-cache. */
-export async function aiAbsences(key: string, fixtures: any[], hints: Map<number, { home: Absence[]; away: Absence[] }>) {
-  const out = new Map<number, { home: Absence[]; away: Absence[] }>(); const today = new Date().toISOString().slice(0, 10);
+export async function aiAbsences(key: string, fixtures: any[], hints: Map<number, { home: Absence[]; away: Absence[] }>, ctxHints: Map<number, CtxHint> = new Map()) {
+  const out = new Map<number, { home: Absence[]; away: Absence[] }>(), ctxOut = new Map<number, AiCtx>(); let nChecked = 0; const today = new Date().toISOString().slice(0, 10);
   let calls = 0, err: string | undefined;
-  if (!hasSearch()) return { map: out, error: 'TAVILY_API_KEY kosong' as string | undefined };
-  const pool = fixtures.slice(0, CFG.newsBatchSize * CFG.newsMaxCalls);
+  if (!hasSearch()) return { map: out, ctx: ctxOut, nCtx: 0, error: 'TAVILY_API_KEY kosong' as string | undefined };
+  // v6: kuota terbatas -> laga penting (final, gugur, derbi, grup timnas) didahulukan; urutan sama untuk laga sederajat (sort stabil)
+  const pool = (CFG.ctxAi ? [...fixtures].sort((a, b) => matchImportance(b) - matchImportance(a)) : fixtures).slice(0, CFG.newsBatchSize * CFG.newsMaxCalls);
   for (let i = 0; i < pool.length && calls < CFG.newsMaxCalls; i += CFG.newsBatchSize) {
     const batch = pool.slice(i, i + CFG.newsBatchSize);
-    const ck = `news_${today}_${batch.map((f: any) => f.fixture.id).join('-')}`, c = readCache<any[]>(CFG.cacheDir, ck);
-    let arr: any[];
+    const ck = `news2_${today}_${batch.map((f: any) => f.fixture.id).join('-')}`, c = readCache<any[]>(CFG.cacheDir, ck);
+    let arr: any[]; const hitsById = new Map<number, WebHit[]>();
     if (c && (Date.now() - c.ts) / 3.6e6 <= CFG.newsTtlH) arr = c.data;
     else {
       const blocks: string[] = [];
@@ -61,9 +63,10 @@ export async function aiAbsences(key: string, fixtures: any[], hints: Map<number
         for (const f of batch) {
           const hits = await searchMatch({ id: f.fixture.id, home: f.teams.home.name, away: f.teams.away.name });
           if (!hits.length) continue; // tanpa sumber web -> laga ini dilewati
+          hitsById.set(f.fixture.id, hits);
           const h = hints.get(f.fixture.id) as any, hi = (t: number) => (h?._m?.get(t) ?? []).map((a: Absence) => a.name).join(', ') || '-';
           blocks.push(`### id ${f.fixture.id}: ${f.teams.home.name} (kandang) vs ${f.teams.away.name} (tandang), ${f.league.name}, ${f.fixture.date}\n` +
-            `Daftar API (belum terverifikasi) kandang: ${hi(f.teams.home.id)}; tandang: ${hi(f.teams.away.id)}\nSUMBER:\n${formatHits(hits)}`);
+            `Daftar API (belum terverifikasi) kandang: ${hi(f.teams.home.id)}; tandang: ${hi(f.teams.away.id)}${CFG.ctxAi && ctxHints.get(f.fixture.id) ? `\n${ctxHints.get(f.fixture.id)!.text}` : ''}\nSUMBER:\n${formatHits(hits)}`);
         }
       } catch (e) { err = (e as Error).message; console.warn('[berita-web] gagal:', err); break; }
       if (!blocks.length) continue;
@@ -71,10 +74,17 @@ export async function aiAbsences(key: string, fixtures: any[], hints: Map<number
       const prompt = `Hari ini ${today}. Dari SUMBER web di bawah (berita terbaru), ekstrak pemain yang cedera, diskors, atau diragukan tampil untuk tiap pertandingan.\n\n${blocks.join('\n\n')}\n\n` +
         `Untuk tiap pemain absen berikan: name, pos (GK|DEF|MID|FWD), role (\"key\" = bintang/top skor/kiper utama/kapten yang hampir pasti starter; \"starter\" = starter reguler; \"rotation\" = pelapis), status (\"out\" = pasti absen, \"doubt\" = diragukan), reason (singkat).\n` +
         `ATURAN KERAS: gunakan HANYA informasi yang tertulis di SUMBER laga tersebut; JANGAN menebak atau memakai ingatan lama; jika SUMBER tidak menyebut pemain absen, beri array kosong. Daftar API di atas hanya petunjuk, sertakan hanya bila SUMBER mengonfirmasi. ` +
-        `Balas HANYA JSON array: [{\"id\":number,\"home\":[{\"name\":string,\"pos\":string,\"role\":string,\"status\":string,\"reason\":string}],\"away\":[...]}]`;
+        (CFG.ctxAi ? CTX_PROMPT + `\nBalas HANYA JSON array: [{\"id\":number,\"home\":[{\"name\":string,\"pos\":string,\"role\":string,\"status\":string,\"reason\":string}],\"away\":[...],\"ctx\":{\"sig\":[{\"team\":\"home\"|\"away\",\"kind\":string,\"value\":string,\"s\":[number],\"ev\":string}],\"leg1\":{\"home_team\":string,\"score\":string,\"s\":[number],\"ev\":string}|null,\"derby\":{\"s\":[number],\"ev\":string}|null}}]`
+        : `Balas HANYA JSON array: [{\"id\":number,\"home\":[{\"name\":string,\"pos\":string,\"role\":string,\"status\":string,\"reason\":string}],\"away\":[...]}]`);
       try {
         const { json: j } = await geminiGenerate(key, { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0 } });
-        arr = extractJsonArray((j.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? '').join(''));
+        // v6: konteks AI DIVALIDASI SEKARANG (jumlah & isi sumber web hanya diketahui saat panggilan ini) lalu hasil yang sudah bersih yang disimpan ke cache.
+        //     Saat dibaca dari cache tidak ada validasi ulang: `cx` sudah final. (Menyimpan mentahan lalu memvalidasi ulang dari cache akan membuang semuanya karena sumber tak diketahui.)
+        arr = extractJsonArray((j.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? '').join('')).map((it: any) => {
+          const fx = batch.find((f: any) => f.fixture.id === it?.id), hits = hitsById.get(it?.id) ?? [];
+          const cx = CFG.ctxAi && fx ? validateAiCtx(it?.ctx, hits, { home: fx.teams.home.name, away: fx.teams.away.name, round: fx.league.round, hasLeg1: ctxHints.get(fx.fixture.id)?.hasLeg1 }) : null;
+          return { id: it?.id, home: it?.home, away: it?.away, cx };
+        });
         writeCache(CFG.cacheDir, ck, arr);
       } catch (e) { err = (e as Error).message; console.warn('[gemini-berita] gagal:', err); if (/HTTP 429|HTTP 404/.test(err)) break; continue; }
     }
@@ -82,16 +92,17 @@ export async function aiAbsences(key: string, fixtures: any[], hints: Map<number
       const fx = batch.find((f: any) => f.fixture.id === it?.id); if (!fx) continue;
       const clean = (l: any) => (Array.isArray(l) ? l : []).map(validateAbsence).filter((a): a is Absence => !!a).slice(0, 8);
       out.set(fx.fixture.id, { home: clean(it.home), away: clean(it.away) });
+      if (CFG.ctxAi && it.cx && typeof it.cx === 'object' && Array.isArray(it.cx.sigs)) { ctxOut.set(fx.fixture.id, it.cx as AiCtx); nChecked++; }
     }
   }
-  console.log(`[gemini-berita] ${out.size}/${pool.length} laga, ${calls} panggilan`);
-  return { map: out, error: err };
+  console.log(`[gemini-berita] ${out.size}/${pool.length} laga, ${calls} panggilan${CFG.ctxAi ? `, konteks AI ${nChecked} laga diperiksa` : ''}`);
+  return { map: out, ctx: ctxOut, nCtx: nChecked, error: err };
 }
 
 /** Kumpulkan absensi: API-Football (murah) + Gemini berita (opsional). Return per fixture id. */
-export async function collectAbsences(api: FootballApi, fixtures: any[], dates: string[], gKey?: string): Promise<{ map: AbsMap; nApi: number; nAi: number; error?: string }> {
+export async function collectAbsences(api: FootballApi, fixtures: any[], dates: string[], gKey?: string, ctxHints?: Map<number, CtxHint>): Promise<{ map: AbsMap; nApi: number; nAi: number; error?: string; ctx: Map<number, AiCtx>; nCtx: number }> {
   const hints = CFG.useInjuries ? await apiInjuries(api, dates) : new Map();
-  const ai = gKey && CFG.useNews && fixtures.length ? await aiAbsences(gKey, fixtures, hints) : { map: new Map(), error: undefined as string | undefined };
+  const ai = gKey && CFG.useNews && fixtures.length ? await aiAbsences(gKey, fixtures, hints, ctxHints) : { map: new Map(), ctx: new Map<number, AiCtx>(), nCtx: 0, error: undefined as string | undefined };
   const map: AbsMap = new Map(); let nApi = 0, nAi = 0;
   for (const f of fixtures) {
     const id = f.fixture.id, h = hints.get(id) as any, a = ai.map.get(id);
@@ -104,5 +115,5 @@ export async function collectAbsences(api: FootballApi, fixtures: any[], dates: 
     if (a) nAi++; else nApi++;
     map.set(id, { home, away, source, checked: !!a });
   }
-  return { map, nApi, nAi, error: ai.error };
+  return { map, nApi, nAi, error: ai.error, ctx: ai.ctx, nCtx: ai.nCtx };
 }

@@ -1,4 +1,4 @@
-import type { Prediction, AHLine, Absence, MarketInfo, Probs3 } from '../shared/types.ts';
+import type { Prediction, AHLine, Absence, MarketInfo, Probs3, MatchContext } from '../shared/types.ts';
 import { CFG } from './config.ts';
 import { type TableCtx, stakeMultipliers } from './stakes.ts';
 
@@ -153,7 +153,7 @@ export function absenceImpact(list?: Absence[]) {
 }
 type AbsIn = { home: Absence[]; away: Absence[]; source: 'ai' | 'api' | 'both'; checked: boolean };
 
-export interface Ext { market?: MarketInfo | null; marketW?: number; tau?: number; table?: TableCtx | null }
+export interface Ext { market?: MarketInfo | null; marketW?: number; tau?: number; table?: TableCtx | null; ctx?: MatchContext | null }
 type T3 = [number, number, number];
 
 /** Statistik dari matriks skor: peluang 1X2 dan Over 2.5. */
@@ -218,6 +218,13 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
     stakes = { home: pick(m.sitH), away: pick(m.sitA), phase: r3(m.phase), adj: { home: r3(lh / h0 - 1), away: r3(la / a0 - 1) } };
   }
 
+  // --- v5: konteks laga (final, derbi, leg 2, kelelahan, grup timnas). Pengali sudah dihitung scripts/context.ts ---
+  let context: Prediction['context'];
+  if (ext?.ctx) {
+    lh = clamp(lh * ext.ctx.mul.home, 0.2, 4.5); la = clamp(la * ext.ctx.mul.away, 0.2, 4.5);
+    context = { ...ext.ctx, mul: { home: r3(ext.ctx.mul.home), away: r3(ext.ctx.mul.away) }, confFactor: r3(ext.ctx.confFactor) };
+  }
+
   // --- Model murni -> (opsional) gabung pasar -> (opsional) temperatur -> fit ulang xG ---
   let m = scoreMatrix(lh, la);
   const s0 = matrixStats(m), model3: T3 = [s0.ph, s0.pd, s0.pa];
@@ -260,7 +267,7 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
     agreement = 1 - clamp((tv - 0.05) * 1.5, 0, 0.35);
     if (decide1x2(model3[0], model3[1], model3[2]) !== decide1x2(market.home, market.draw, market.away)) agreement *= 0.9;
   }
-  const comp = CFG.friendlyLeagues.has(fx.league.id) ? CFG.friendlyConfFactor : 1;
+  const comp = (CFG.friendlyLeagues.has(fx.league.id) ? CFG.friendlyConfFactor : 1) * (ext?.ctx?.confFactor ?? 1);
   const core = clamp((maxP - 0.34) / 0.5, 0, 1);
   const confidence = Math.round(100 * core * (0.5 + 0.5 * q) * agreement * comp);
   const confidenceLevel = confidence >= 50 ? 'high' : confidence >= 30 ? 'medium' : 'low';
@@ -282,11 +289,11 @@ export function buildPrediction(fx: any, homeRow: any | null, awayRow: any | nul
     fairOdds: { home: odds(ph), draw: odds(pd), away: odds(pa) },
     doubleChance: { hx: r3(ph + pd), xa: r3(pd + pa), ha: r3(ph + pa) },
     ou, btts: { yes: r3(btts), no: r3(1 - btts) }, topScores, handicap, fairHandicap,
-    confidence, confidenceLevel, conf: { core: r3(core), quality: r3(q), agreement: r3(agreement), comp },
+    confidence, confidenceLevel, conf: { core: r3(core), quality: r3(q), agreement: r3(agreement), comp: r3(comp) },
     picks: { result, pick1x2: pick, goals: o25.over >= 0.5 ? 'Over 2.5' : 'Under 2.5', safe: `${safe.t} (${Math.round(Math.min(safe.p, 1) * 100)}%)` },
     aiSummary: 'AI analysis unavailable.',
     absences: abs && adj ? { ...abs, adj } : undefined,
-    stakes,
+    stakes, context,
     modelProbs: P3(model3), rawProbs: P3(raw3), market: market ?? undefined, calib: { tau, marketW: r3(mw) },
   };
 }

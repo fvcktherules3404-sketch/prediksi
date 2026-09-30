@@ -4,17 +4,22 @@ import { CFG } from './config.ts';
 import type { FootballApi } from './footballApi.ts';
 import type { Row } from './standings.ts';
 import { isSeniorMen } from './filter.ts';
+import { isKnockoutRound, legKey, type Leg } from './context.ts';
 
 /** ===== Klasemen buatan sendiri dari hasil pertandingan (fixture berstatus selesai) =====
  * 1 request/hari (fixture kemarin). Disimpan di data/results.json dan di-commit oleh workflow. */
 export interface S { p: number; gf: number; ga: number }
 export interface TeamRec { name: string; pts: number; all: S; home: S; away: S; form: string }
 /** scores: skor 90 menit per fixture id [kandang, tandang] -> bahan evaluate.ts untuk menilai prediksi. */
-export interface ResultsFile { version: 1; lastDate: string | null; seenIds: number[]; leagues: Record<string, Record<string, TeamRec>>; scores?: Record<string, [number, number]> }
+export interface ResultsFile { version: 1; lastDate: string | null; seenIds: number[]; leagues: Record<string, Record<string, TeamRec>>; scores?: Record<string, [number, number]>;
+  /** v5: waktu (detik) beberapa laga terakhir per tim (semua kompetisi) -> jeda antar-laga / kelelahan. */
+  recent?: Record<string, number[]>;
+  /** v5: leg pertama laga gugur (kunci = liga:musim:babak:idkecil-idbesar) -> agregat di leg kedua. */
+  legs?: Record<string, Leg> }
 
 export const emptyResults = (): ResultsFile => ({ version: 1, lastDate: null, seenIds: [], leagues: {}, scores: {} });
 export function loadResults(file: string): ResultsFile {
-  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); if (o?.version === 1 && o.leagues) { o.scores ??= {}; return o; } } catch {}
+  try { const o = JSON.parse(fs.readFileSync(file, 'utf8')); if (o?.version === 1 && o.leagues) { o.scores ??= {}; o.recent ??= {}; o.legs ??= {}; return o; } } catch {}
   return emptyResults();
 }
 export function saveResults(file: string, r: ResultsFile) {
@@ -22,7 +27,10 @@ export function saveResults(file: string, r: ResultsFile) {
   const tmp = file.replace('.json', '.tmp.json');
   const seenIds = r.seenIds.slice(-4000), keep = new Set(seenIds.map(String));
   const scores = Object.fromEntries(Object.entries(r.scores ?? {}).filter(([k]) => keep.has(k)));
-  fs.writeFileSync(tmp, JSON.stringify({ ...r, seenIds, scores }));
+  // buang riwayat tim yang laga terakhirnya sudah lama, dan leg pertama yang sudah kedaluwarsa (> 60 hari): file tidak membengkak
+  const nowS = Date.now() / 1000, recent = Object.fromEntries(Object.entries(r.recent ?? {}).filter(([, v]) => v.length && nowS - v[v.length - 1] <= CFG.recentMaxAgeDays * 86400));
+  const legs = Object.fromEntries(Object.entries(r.legs ?? {}).filter(([, l]) => nowS - l.ts <= 60 * 86400));
+  fs.writeFileSync(tmp, JSON.stringify({ ...r, seenIds, scores, recent, legs }));
   JSON.parse(fs.readFileSync(tmp, 'utf8')); fs.renameSync(tmp, file);
 }
 
@@ -42,6 +50,12 @@ export function addFixture(res: ResultsFile, f: any): boolean {
   const k = `${f.league.id}:${f.league.season}`, lg = (res.leagues[k] ??= {});
   const H = (lg[f.teams.home.id] ??= blank(f.teams.home.name)), A = (lg[f.teams.away.id] ??= blank(f.teams.away.name));
   apply(H, 'home', hg, ag); apply(A, 'away', ag, hg); res.seenIds.push(id);
+  const ts = f?.fixture?.timestamp;
+  if (typeof ts === 'number') { // v5: jeda antar-laga (semua kompetisi) dan leg pertama laga gugur
+    const rc = (res.recent ??= {});
+    for (const tid of [f.teams.home.id, f.teams.away.id]) rc[tid] = [...(rc[tid] ?? []), ts].sort((a, b) => a - b).slice(-CFG.recentKeep);
+    if (isKnockoutRound(f.league.round)) { const key = legKey(f.league.id, f.league.season, String(f.league.round), f.teams.home.id, f.teams.away.id); (res.legs ??= {})[key] ??= { h: f.teams.home.id, a: f.teams.away.id, hg, ag, ts }; }
+  }
   const ft = f?.score?.fulltime; // hasil 90 menit (prediksi dinilai pada 90 menit, bukan perpanjangan waktu/penalti)
   (res.scores ??= {})[String(id)] = [typeof ft?.home === 'number' ? ft.home : hg, typeof ft?.away === 'number' ? ft.away : ag];
   return true;

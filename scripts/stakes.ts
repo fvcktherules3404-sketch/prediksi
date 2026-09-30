@@ -11,6 +11,7 @@ export interface TableCtx {
   top: number; second: number;          // poin peringkat 1 & 2
   c4: number; c5: number;               // poin peringkat 4 & 5 (garis 4 besar)
   safe: number; drop: number;           // poin tim terbawah yang masih aman & tim tertinggi di zona degradasi
+  rem?: number;                         // sisa laga TERBANYAK di antara semua tim (G - laga paling sedikit yang dimainkan); dipakai untuk menentukan juara/degradasi yang sudah pasti
 }
 export const nRelegated = (N: number) => (N >= 18 ? 3 : 2);
 
@@ -18,11 +19,12 @@ export const nRelegated = (N: number) => (N >= 18 ? 3 : 2);
 export function tableCtx(all: TeamPts[], home: TeamPts, away: TeamPts, N: number, G: number): TableCtx {
   const pts = all.map(e => e.pts); while (pts.length < N) pts.push(0);
   const sp = [...pts].sort((a, b) => b - a), nr = nRelegated(N), rank = (p: number) => 1 + sp.filter(v => v > p).length;
-  return { N, G, gpH: home.p, gpA: away.p, ptsH: home.pts, ptsA: away.pts, rankH: rank(home.pts), rankA: rank(away.pts),
+  const minP = all.length >= N ? Math.min(...all.map(e => e.p)) : 0;
+  return { N, G, rem: Math.max(0, G - minP), gpH: home.p, gpA: away.p, ptsH: home.pts, ptsA: away.pts, rankH: rank(home.pts), rankA: rank(away.pts),
     top: sp[0], second: sp[1], c4: sp[3], c5: sp[4], safe: sp[N - nr - 1], drop: sp[N - nr] };
 }
 
-export type StakeKind = 'title' | 'europe' | 'safe' | 'relegation';
+export type StakeKind = 'title' | 'europe' | 'safe' | 'relegation' | 'champion' | 'relegated';
 export interface Situation {
   kind: StakeKind;
   /** 1 = sedang berebut sesuatu (tepat di garis), 0 = tanpa target. */
@@ -37,6 +39,11 @@ const DIST_SCALE = 0.3; // jarak ke garis dinormalisasi sisa poin maksimum (3 x 
 export function situation(c: TableCtx, side: 'home' | 'away'): Situation {
   const pts = side === 'home' ? c.ptsH : c.ptsA, gp = side === 'home' ? c.gpH : c.gpA, rank = side === 'home' ? c.rankH : c.rankA;
   const M = 3 * Math.max(0, c.G - gp) + 3;
+  // Status yang sudah PASTI secara matematis (konservatif, seri poin dianggap belum pasti). Tim seperti ini praktis tanpa target sisa musim.
+  if (c.rem !== undefined) {
+    if (rank === 1 && pts > c.second + 3 * c.rem) return { kind: 'champion', need: 0, defending: true, label: 'Sudah juara' };
+    if (pts + 3 * Math.max(0, c.G - gp) < c.safe) return { kind: 'relegated', need: 0.1, defending: false, label: 'Sudah degradasi' };
+  }
   const lines: { kind: StakeKind; at: number }[] = [
     { kind: 'title', at: rank === 1 ? c.second : c.top },       // pemuncak: jarak ke pengejar; lainnya: jarak ke pemuncak
     { kind: 'europe', at: rank <= 4 ? c.c5 : c.c4 },            // anggota 4 besar: jarak ke peringkat 5; lainnya: jarak ke peringkat 4
