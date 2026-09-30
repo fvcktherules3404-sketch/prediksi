@@ -52,3 +52,50 @@ Masukan pengguna: (1) awal musim banyak gol, akhir musim "main aman" sehingga go
 
 Efek nyata kecil (±3–5% pada xG di laga ekstrem). Matikan dengan `STAKES=false`; jalankan ulang backtest setelah data bertambah sebelum mengubah `STAKES_REL / STAKES_LEVEL / STAKES_PHASE`.
 **Batasan:** belum diuji untuk fase gugur dua leg (agregat), fase liga UCL/UEL, atau musim pendek; ambang "garis 4 besar" berlaku generik (bukan jatah Eropa tiap liga); data uji didominasi liga Amerika Selatan/Asia/Norwegia + Eropa musim ini.
+
+
+## Konteks laga v5 (`scripts/context.ts`)
+
+Cakupan diperluas melampaui tabel liga domestik. Semua sakelar ada di `CFG.ctx*` (env `CTX_FATIGUE`, `CTX_LEG2`, `CTX_FINAL`, `CTX_DERBY`, `CTX_GROUP` = `false` untuk mematikan).
+
+| Konteks | Cara kerja | Efek | Status bukti |
+|---|---|---|---|
+| Juara/degradasi pasti | `stakes.ts`: pemuncak dengan selisih > 3 x sisa laga = "Sudah juara" (need 0); poin maksimum < batas aman = "Sudah degradasi" | lawan yang masih berebut dinilai lebih tajam (lewat `stakesRel`) | backtest H diulang: 111 dari 3.840 laga uji berubah, selisih log-loss -0,00001 ± 0,00006 (netral) |
+| Kelelahan | jeda hari sejak laga terakhir (semua kompetisi, dari `results.json` + jadwal window) + jumlah laga 10 hari | `ctxFatigueRel` = 0 (label saja) | backtest I (27.927 laga klub): tidak ada pengaruh nyata; terbaik di set latih = 0 |
+| Leg kedua | leg 1 disimpan di `results.legs`; agregat = gol tim di leg 1 - gol lawan | `ctxLeg2K` 0,05 per gol agregat (maks 2 gol) | belum diuji (tidak ada data agregat di repo) |
+| Final | babak persis "Final" | total gol -4%, keyakinan x0,9 | belum diuji |
+| Derbi | daftar pasangan di `DERBIES`, cocok persis nama | keyakinan x0,93, xG tidak diubah | belum diuji |
+| Grup timnas | klasemen grup API-Football (maks 4 request/run); status `through` / `out` / `alive` secara matematis, seri poin dianggap belum pasti | `ctxGroupRel` 0,12 (relatif, total dijaga); dua tim sama-sama tanpa taruhan -> keyakinan x0,9 | belum diuji |
+
+**Batasan:** riwayat jeda hanya ada untuk laga yang sudah terkumpul di `results.json` (mulai dari saat sistem berjalan), jadi tim tanpa riwayat tidak dapat penyesuaian. Klasemen grup butuh 1 request per turnamen dan bisa kosong di paket gratis; bila kosong, laga tetap diprediksi tanpa konteks grup. Slot lolos diambil dari deskripsi API bila ada, kalau tidak dianggap 2 per grup. Kualifikasi dan Nations League dianggap kandang-tandang (konservatif). Daftar derbi perlu dirawat manual.
+
+
+## v6: AI ikut membaca konteks laga (`scripts/aiContext.ts`)
+
+Konteks yang **tidak bisa dihitung dari angka** kini juga dibaca AI dari berita web: rotasi pemain yang diumumkan, motivasi (sudah juara / sudah degradasi / sudah lolos / sudah gugur / fokus ke laga lain), kelelahan nyata (perpanjangan waktu, perjalanan jauh), skor leg 1 yang belum tercatat sistem, dan derbi yang belum ada di daftar.
+
+**Tanpa biaya tambahan.** Permintaan konteks ikut di prompt berita cedera yang sudah ada (`news.ts`), memakai hasil Tavily yang sudah di-cache per laga (`searchMatch`). Jumlah panggilan Gemini dan kredit Tavily per run tidak bertambah (diverifikasi di `e2e_mock.ts`). Kuota berita terbatas (20 laga/run), jadi laga penting (final, gugur, derbi, grup timnas) sekarang **didahulukan** (`matchImportance`).
+
+**Validasi ketat sebelum dipakai atau disimpan ke cache** (`validateAiCtx`; sinyal yang gagal dibuang, tidak pernah diperbaiki):
+1. minimal `ctxAiMinSrc` = 2 sumber web; nomor sumber yang dikutip harus ada;
+2. tiap sinyal wajib membawa **kutipan asli** dari sumber (bahasa aslinya); minimal 60% kata bermaknanya harus ada di teks sumber yang dikutip, jadi karangan/terjemahan bebas ditolak;
+3. rotasi "besar" wajib didukung 2 situs berbeda, kalau tidak diturunkan menjadi "sebagian";
+4. skor leg 1: hanya untuk babak gugur non-final yang leg 1-nya belum tercatat; skor harus muncul di teks sumber **dan** di kutipan; arah kandang/tandang dicocokkan lewat **nama tim tuan rumah leg 1**, bukan tebakan AI;
+5. derbi: kutipan harus memuat kata derbi/rivalitas dan hanya bila pasangan itu belum ada di daftar sistem.
+Karena jumlah/isi sumber hanya diketahui saat panggilan, validasi dilakukan **sebelum** menulis cache; cache menyimpan hasil yang sudah bersih (`cx`), jadi pembacaan dari cache tidak perlu memvalidasi ulang (dan tidak membuang semuanya).
+
+**Efek (kecil, terbatas, hanya menurunkan xG tim itu):**
+| Sinyal AI | Pengurangan ln-xG tim | Keyakinan |
+|---|---|---|
+| rotasi besar / sebagian | 0,05 / 0,02 | rotasi besar: x0,96 |
+| motivasi rendah, atau status juara/degradasi/lolos/gugur | 0,03 | x0,96 |
+| kelelahan nyata | 0,015 | tidak berubah |
+| skor leg 1 (bila sistem tak punya) | pengali leg 2 x `ctxAiLegTrust` 0,7 | tidak berubah |
+| derbi (di luar daftar sistem) | tidak ada | x0,93 (sama seperti derbi sistem) |
+Total penurunan per tim dibatasi `ctxAiMaxXg` = 0,06 (sekitar -5,8%); faktor keyakinan AI minimal 0,92; pengali xG gabungan seluruh konteks (sistem + AI) dijepit 0,8-1,25.
+
+**Tidak dihitung dua kali:** bila tabel liga atau klasemen grup timnas sudah menilai motivasi tim itu (aman / sudah juara / sudah degradasi / lolos / gugur), status & motivasi dari AI diabaikan dan rotasi dihitung setengah. Skor leg 1 dari catatan sendiri (`results.legs`) selalu didahulukan dari AI. Cedera/skorsing tidak boleh dilaporkan sebagai rotasi (sudah ada di daftar absen).
+
+**Status bukti:** efek ini **belum bisa di-backtest** (tidak ada data historis berita/rotasi di repo), jadi bobotnya sengaja kecil. Cara memantau: `calibration.json` sudah mencatat akurasi per level keyakinan; bandingkan laga bertag AI (`context.info.ai` di `public/data/history/*.json`) dengan yang tidak setelah 150+ laga. Sakelar: `AI_CONTEXT=false` (mati total, kembali persis seperti v5), `CTX_AI_SCALE=0` (label tetap tampil, xG dan keyakinan tidak berubah), `CTX_AI_SCALE=0.5` (setengah efek).
+
+**Cakupan per jenis laga:** kelelahan (perpanjangan waktu/perjalanan dari berita, melengkapi jeda hari dari sistem), juara/degradasi pasti (status dari berita bila tabel tidak tersedia), leg kedua (skor leg 1), final (kelelahan/rotasi/status; label final tetap dari sistem), derbi (di luar daftar), grup timnas (rotasi/lolos/gugur dari berita, melengkapi hitungan klasemen). Batasan: kualitas bergantung pada hasil pencarian Tavily (5 hasil, 600 karakter per hasil); pencarian berita berbahasa Inggris paling andal, sumber berbahasa lain sering gagal lolos cek kutipan (aman: sinyal dibuang, bukan salah pakai).
