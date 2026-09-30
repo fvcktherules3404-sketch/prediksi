@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Prediction, PredictionsFile, Metadata, Calibration } from '../shared/types.ts';
+import type { Prediction, PredictionsFile, Metadata, Calibration, MarketTotal, HistRow, HitStat } from '../shared/types.ts';
 import { pickOptions } from '../shared/picks.ts';
 import './picks.css';
 
@@ -35,6 +35,73 @@ function Track({ c }: { c: Calibration }) {
     </details>
   );
 }
+const tot = (t?: MarketTotal) => (t && t.n ? `${t.hit}/${t.n} (${acc(t.acc)})` : '–');
+const mark = (r: 'ok' | 'no' | 'push') => (r === 'ok' ? '✓' : r === 'no' ? '✗' : '↔');
+type HTab = 'x12' | 'hdp' | 'ou' | 'btts' | 'combo';
+const HTABS: [HTab, string][] = [['x12', '1X2'], ['hdp', 'HDP'], ['ou', 'Over/Under'], ['btts', 'BTTS'], ['combo', 'Gabungan']];
+interface HItem { id: number; label: string; res: 'ok' | 'no' | 'push'; note: string; title: string }
+/** Halaman Riwayat: ringkasan rekam jejak, total benar, winrate gabungan, dan daftar SEMUA laga dinilai per pasar (tab). Chip ✓ = tebakan benar, ✗ = salah. */
+function History({ c }: { c: Calibration }) {
+  const [tab, setTab] = useState<HTab>('x12');
+  if (!c.n) return <div className="track"><b>Riwayat</b> — belum ada laga yang selesai dinilai. Akan terisi otomatis setelah hasil pertandingan terkumpul.</div>;
+  const t = c.totals, cnt = (h: HitStat): MarketTotal => ({ n: h.n, hit: Math.round((h.acc ?? 0) * h.n), acc: h.acc });
+  const x12 = t?.x12 ?? { n: c.n, hit: Math.round((c.acc ?? 0) * c.n), acc: c.acc }, ou = t?.ou25 ?? cnt(c.ou25), bt = t?.btts ?? cnt(c.btts);
+  const pk1 = (home: string, away: string, k: string) => (k === '1' ? `${home} menang` : k === '2' ? `${away} menang` : 'Seri');
+  const items: HItem[] = c.history
+    ? c.history.flatMap((r: HistRow): HItem[] => {
+      const label = `${r.home} ${r.score} ${r.away}`, title = `${r.league ?? ''} · ${time(new Date(r.ts * 1000).toISOString())} · keyakinan ${r.conf}`;
+      const it = (res: 'ok' | 'no' | 'push', note: string): HItem[] => [{ id: r.id, label, res, note, title }];
+      const ok = (b: boolean) => (b ? 'ok' as const : 'no' as const);
+      if (tab === 'x12') return it(ok(r.x12.hit), pk1(r.home, r.away, r.x12.pick));
+      if (tab === 'ou') return it(ok(r.ou.hit), `${r.ou.pick === 'over' ? 'Over' : 'Under'} 2.5`);
+      if (tab === 'btts') return it(ok(r.btts.hit), `BTTS ${r.btts.pick === 'yes' ? 'Ya' : 'Tidak'}`);
+      if (tab === 'hdp') return r.hdp ? it(r.hdp.res === 'win' ? 'ok' : r.hdp.res === 'loss' ? 'no' : 'push', `${r.hdp.side === '1' ? r.home : r.away} ${fmtLine(r.hdp.line)}${r.hdp.res === 'push' ? ' (push)' : ''}`) : [];
+      const m = (b: boolean) => (b ? '✓' : '✗');
+      return it(ok(r.combo3), `1X2 ${m(r.x12.hit)} · O/U ${m(r.ou.hit)} · BTTS ${m(r.btts.hit)}${r.hdp ? ` · HDP ${r.hdp.res === 'win' ? '✓' : r.hdp.res === 'loss' ? '✗' : '↔'}` : ''}`);
+    })
+    : tab === 'x12' ? c.recent.map((r, i) => ({ id: i, label: `${r.home} ${r.score} ${r.away}`, res: r.hit ? 'ok' as const : 'no' as const, note: pk1(r.home, r.away, r.pick), title: '' })) : [];
+  const nOk = items.filter(i => i.res === 'ok').length, nNo = items.filter(i => i.res === 'no').length, nPush = items.length - nOk - nNo;
+  return (
+    <section className="hist">
+      <div className="track">
+        <p><b>Rekam jejak</b> · {c.n} laga dinilai · tebakan 1X2 benar {acc(c.acc)} · Brier {c.brier?.toFixed(3)} <small>(acak {c.uniform.brier.toFixed(3)}, makin kecil makin baik)</small></p>
+        <p>Log-loss {c.logloss?.toFixed(3)} <small>(acak {c.uniform.logloss.toFixed(3)})</small> · Over/Under 2.5 benar {acc(c.ou25.acc)} ({c.ou25.n}) · BTTS benar {acc(c.btts.acc)} ({c.btts.n})</p>
+        <p><b>Apakah keyakinan tinggi memang lebih sering benar?</b> Tinggi {acc(c.byLevel.high.acc)} ({c.byLevel.high.n}) · Sedang {acc(c.byLevel.medium.acc)} ({c.byLevel.medium.n}) · Rendah {acc(c.byLevel.low.acc)} ({c.byLevel.low.n})</p>
+        {c.market.n > 0 && <p>Pasar vs model ({c.market.n} laga): log-loss model {c.market.llModel?.toFixed(3) ?? '–'} · pasar {c.market.llMarket?.toFixed(3) ?? '–'} · gabungan {c.market.llBlend?.toFixed(3) ?? '–'}</p>}
+        <p><small>{c.tuning.note}</small></p>
+      </div>
+      <h2 className="sec">🏆 Total benar</h2>
+      <div className="stats">
+        <div><small>Tebak menang (1X2)</small><b>{tot(x12)}</b></div>
+        <div><small>Over/Under 2.5</small><b>{tot(ou)}</b></div>
+        <div><small>BTTS</small><b>{tot(bt)}</b></div>
+        <div><small>HDP <em>(push {t?.hdpPush ?? 0} tidak dihitung)</em></small><b>{tot(t?.hdp)}</b></div>
+      </div>
+      <h2 className="sec">📈 Winrate</h2>
+      <div className="stats">
+        <div><small>Keseluruhan · semua tebakan digabung</small><b>{tot(t?.overall)}</b></div>
+        <div><small>Gabungan 3 pasar · 1X2 + O/U + BTTS benar semua</small><b>{tot(t?.combo3)}</b></div>
+        <div><small>Gabungan 4 pasar · + HDP benar semua</small><b>{tot(t?.combo4)}</b></div>
+      </div>
+      <p className="sub"><small>Keseluruhan = jumlah tebakan benar dari semua pasar (1X2, O/U 2.5, BTTS, HDP) dibagi jumlah tebakan. Gabungan = satu laga benar hanya bila semua pasarnya benar; salah satu meleset berarti salah. HDP hanya ada bila laga punya pick HDP yang cukup tegas (peluang ≥ 60%), jadi gabungan 4 pasar hanya menghitung laga itu. HDP push (uang kembali) tidak dihitung.</small></p>
+      {!t && <p className="sub"><small>Total HDP, winrate keseluruhan & gabungan, serta daftar laga per pasar akan terisi setelah update otomatis berikutnya (sementara tampil 24 laga terakhir untuk 1X2).</small></p>}
+      <h2 className="sec">📜 Semua laga dinilai <small>(terbaru di atas)</small></h2>
+      <div className="tabs">{HTABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
+      <details className="how"><summary>Cara membaca ✓ / ✗</summary>
+        <p><b>1X2:</b> ✓ bila hasil 90 menit sama dengan tebakan rumus (kandang menang / seri / tandang menang), ✗ bila beda. Seri hanya benar bila skor akhirnya seri; perpanjangan waktu & penalti tidak dihitung.</p>
+        <p><b>Over/Under 2.5:</b> tebak Over bila peluang Over ≥ 50%, kalau tidak Under. ✓ bila total gol 3+ (Over) atau 2 ke bawah (Under).</p>
+        <p><b>BTTS:</b> tebak Ya bila peluang ≥ 50%. ✓ bila kedua tim mencetak gol (Ya) atau salah satunya nirbobol (Tidak).</p>
+        <p><b>HDP:</b> pick HDP tegas laga itu (HDP - unggulan / HDP + non-unggulan). ✓ menang (penuh/setengah), ✗ kalah, ↔ push, tidak dihitung.</p>
+      </details>
+      <p className="sub">{HTABS.find(x => x[0] === tab)![1]}: ✓ {nOk} · ✗ {nNo}{nPush ? ` · ↔ ${nPush}` : ''}{nOk + nNo ? ` · benar ${Math.round(nOk / (nOk + nNo) * 100)}%` : ''}</p>
+      <div className="track"><div className="rec hscroll">
+        {items.map((i, k) => <span key={`${i.id}-${k}`} className={i.res === 'ok' ? 'ok' : i.res === 'no' ? 'no' : 'push'} title={i.title}>{mark(i.res)} {i.label} <small>· {i.note}</small></span>)}
+        {!items.length && <span>{tab === 'x12' || c.history ? 'Belum ada data untuk pasar ini.' : 'Akan terisi setelah update otomatis berikutnya.'}</span>}
+      </div></div>
+    </section>
+  );
+}
+
 /** Di bawah xG: 1X2 + satu pilihan lain dengan peluang terbesar (HDP -/+, Over/Under, BTTS; tanpa double chance). */
 function Vs({ p }: { p: Prediction }) {
   const { main, best } = pickOptions(p);
@@ -137,6 +204,7 @@ export default function App() {
   const [cal, setCal] = useState<Calibration | null>(null);
   const [err, setErr] = useState(''); const [tab, setTab] = useState<'formula' | 'ai'>('formula');
   const [league, setLeague] = useState('home'); const [sesi, setSesi] = useState<'all' | 'pagi' | 'malam'>('all');
+  const [view, setView] = useState<'prediksi' | 'riwayat'>('prediksi');
   const [menu, setMenu] = useState(false); const [q, setQ] = useState(''); const [sort, setSort] = useState<'time' | 'conf'>('time');
   useEffect(() => {
     const t = Date.now();
@@ -184,6 +252,8 @@ export default function App() {
       {meta?.status === 'failed' && <div className="warn">Update terakhir gagal ({meta.message}). Menampilkan prediksi terakhir yang berhasil.</div>}
       {err && <div className="warn">Belum ada data prediksi ({err}). Jalankan workflow “Daily Predictions” di GitHub Actions.</div>}
       {data && <p className="sub">Laga {time(data.window.start)} → {time(data.window.end)} · diperbarui {time(data.generatedAt)} · update otomatis 06:00 (laga sampai sore) & 21:00 WIB (laga malam–dini) · AI: {data.ai.used ? `${data.ai.summarized} ringkasan (${data.ai.model})` : 'tidak aktif'}</p>}
+      <div className="tabs"><button className={view === 'prediksi' ? 'on' : ''} onClick={() => setView('prediksi')}>⚽ Prediksi</button><button className={view === 'riwayat' ? 'on' : ''} onClick={() => setView('riwayat')}>📜 Riwayat</button></div>
+      {view === 'riwayat' ? (cal ? <History c={cal} /> : <p className="sub">Belum ada data riwayat.</p>) : <>
       {cal && <Track c={cal} />}
       <div className="sesi">{([['all', 'Seharian'], ['pagi', '☀️ 06:00–21:00'], ['malam', '🌙 21:00–06:00']] as const).map(([k, l]) => <button key={k} className={sesi === k ? 'on' : ''} onClick={() => setSesi(k)}>{l}</button>)}</div>
       <nav className="lg" aria-label="Pilih liga">
@@ -215,6 +285,7 @@ export default function App() {
         {cal && <AiTrack c={cal} />}
         <div className="grid">{shown.filter(m => m.aiOpinion).map(m => <AiCard key={m.id} p={m} />)}</div>
         {!shown.some(m => m.aiOpinion) && <p className="sub">Belum ada opini AI pada pilihan ini.</p>}
+      </>}
       </>}
       <footer>Prediksi adalah estimasi statistik, bukan jaminan hasil. Cedera/skorsing hanya diperhitungkan sebagian (dari laporan yang tersedia), susunan pemain resmi tidak. Untuk hiburan &amp; analisis. Perjudian dilarang di Indonesia — jangan gunakan untuk taruhan.</footer>
     </main>
