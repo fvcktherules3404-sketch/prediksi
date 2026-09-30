@@ -56,3 +56,6 @@ h2.sec{font-size:17px;margin:14px 0 6px}h2.sec small{font-weight:400;color:var(-
 .lgmenu button{margin:2px 4px 2px 0;padding:4px 10px;border-radius:999px;border:1px solid var(--bd);background:transparent;color:inherit;cursor:pointer;font-size:13px}
 .lgmenu button.on{background:#e0f2fe;color:#075985;border-color:#bae6fd;font-weight:600}.lgmenu em{font-style:normal;font-size:11px;opacity:.7}
 .ctry{margin-top:8px}.ctry>b{display:block;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
+
+.chip.ctx{background:#fff7ed;color:#9a3412;border-color:#fed7aa}.chip.ctx.final{background:#fef3c7;color:#92400e;border-color:#fde68a}.chip.ctx.group{background:#ede9fe;color:#5b21b6;border-color:#ddd6fe}.chip.ctx.fatigue{background:#f1f5f9;color:#475569;border-color:#e2e8f0}
+.chip.ctx.ai{background:#ecfeff;color:#155e75;border-color:#a5f3fc}.chip.ctx.aisrc{border-style:dashed}
