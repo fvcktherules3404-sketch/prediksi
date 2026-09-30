@@ -73,4 +73,19 @@ export interface Calibration {
   market:{ n:number; llModel:number|null; llMarket:number|null; llBlend:number|null; bestW:number|null };
   tuning:{ tauRaw:number|null; tau:number; marketW:number; note:string };
   recent:{ home:string; away:string; pick:string; score:string; hit:boolean }[];
+  /** Total benar per pasar + winrate gabungan (ditulis evaluate.ts; laga selesai saja). Kosong pada file lama. */
+  totals?:{ x12:MarketTotal; ou25:MarketTotal; btts:MarketTotal; hdp:MarketTotal; hdpPush:number; overall:MarketTotal; combo3:MarketTotal; combo4:MarketTotal };
+  /** Semua laga yang sudah dinilai, terbaru di atas (untuk halaman Riwayat). */
+  history?:HistRow[];
+}
+export interface MarketTotal { n:number; hit:number; acc:number|null }
+/** Satu baris riwayat: pilihan tiap pasar + benar/salahnya. hdp hanya ada bila laga itu punya pick HDP yang cukup tegas. */
+export interface HistRow {
+  id:number; ts:number; league?:string; home:string; away:string; score:string; conf:number;
+  x12:{ pick:'1'|'X'|'2'; hit:boolean }; ou:{ pick:'over'|'under'; hit:boolean }; btts:{ pick:'yes'|'no'; hit:boolean };
+  hdp?:{ side:'1'|'2'; line:number; res:'win'|'loss'|'push' };
+  /** 1X2 + O/U 2.5 + BTTS benar semua */
+  combo3:boolean;
+  /** 1X2 + O/U 2.5 + BTTS + HDP benar semua; null bila tidak ada pick HDP atau HDP push */
+  combo4:boolean|null;
 }
