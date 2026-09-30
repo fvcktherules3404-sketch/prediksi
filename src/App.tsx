@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Prediction, PredictionsFile, Metadata, Calibration } from '../shared/types.ts';
+import { pickOptions } from '../shared/picks.ts';
+import './picks.css';
 
 const base = import.meta.env.BASE_URL;
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -33,15 +35,13 @@ function Track({ c }: { c: Calibration }) {
     </details>
   );
 }
-const MK: Record<string, string> = { '1x2': 'Tim / Seri', hdp: 'HDP', ou: 'Over/Under', btts: 'BTTS' };
+/** Di bawah xG: 1X2 + satu pilihan lain dengan peluang terbesar (HDP -/+, Over/Under, BTTS; tanpa double chance). */
 function Vs({ p }: { p: Prediction }) {
-  const hl = p.headline;
-  if (!hl) return <div className="vs">xG<br /><b>{p.xg.home.toFixed(2)} - {p.xg.away.toFixed(2)}</b></div>;
+  const { main, best } = pickOptions(p);
   return (
-    <div className={`vs pickbig ${hl.market}`} title={`Pilihan dengan ketegasan tertinggi dari 4 pasar (tim/seri, HDP, Over/Under, BTTS). Peluang ${pct(hl.p)}.`}>
-      <small>PREDIKSI · {MK[hl.market]}</small>
-      <strong>{hl.label}</strong>
-      <span>{pct(hl.p)} <i>xG {p.xg.home.toFixed(1)}-{p.xg.away.toFixed(1)}</i></span>
+    <div className="vs pkbox" title="1X2 dan satu pilihan lain dengan peluang terbesar (HDP -/+, Over/Under, BTTS).">
+      <small>xG {p.xg.home.toFixed(2)} - {p.xg.away.toFixed(2)}</small>
+      {[main, best].map(o => <div key={o.kind} className={`pk ${o.kind}`}><em>{o.tag}</em><strong>{o.label}</strong><span>{pct(o.p)}</span></div>)}
     </div>
   );
 }
@@ -53,7 +53,7 @@ function Card({ p }: { p: Prediction }) {
       {p.preview && <div className="prev" title="Dibuat sesi pagi. Dihitung ulang otomatis jam 21:00 WIB dengan odds & berita terbaru.">⏳ Pratinjau · diperbarui 21:00 WIB</div>}
       <div className="teams">
         <div>{p.home.logo && <img src={p.home.logo} alt="" loading="lazy" />}<b>{p.home.name}</b><small>#{p.home.rank ?? '-'} <Form f={p.home.form} /><Src s={p.home.dataSource} /></small></div>
-        <div className="vs">xG<br /><b>{p.xg.home.toFixed(2)} - {p.xg.away.toFixed(2)}</b></div>
+        <Vs p={p} />
         <div>{p.away.logo && <img src={p.away.logo} alt="" loading="lazy" />}<b>{p.away.name}</b><small>#{p.away.rank ?? '-'} <Form f={p.away.form} /><Src s={p.away.dataSource} /></small></div>
       </div>
       <div className="bar"><span className="h" style={{ width: pct(h) }}>{pct(h)}</span><span className="d" style={{ width: pct(d) }}>{pct(d)}</span><span className="a" style={{ width: pct(a) }}>{pct(a)}</span></div>
@@ -160,8 +160,11 @@ export default function App() {
     if (high.length >= MIN_SHOWN) return high;
     return [...high, ...rank(inSesi.filter(m => m.confidenceLevel !== 'high')).slice(0, MIN_SHOWN - high.length)];
   }, [inSesi]);
-  // Rekomendasi pick: prediksi utama dari laga di beranda yang belum mulai, diurut ketegasan
-  const recs = useMemo(() => top.filter(m => m.headline && m.timestamp * 1000 > Date.now()).sort((a, b) => b.headline!.strength - a.headline!.strength), [top]);
+  // Rekomendasi pick: per laga yang belum mulai, 1X2 + pilihan lain yang cukup tegas (HDP -/+, Over/Under, BTTS), diurut ketegasan
+  const recs = useMemo(() => top.filter(m => m.timestamp * 1000 > Date.now()).map(m => {
+    const o = pickOptions(m), opts = [o.main, ...o.others.filter(x => x.strong)];
+    return { m, opts, s: Math.max(...opts.map(x => x.strength)) };
+  }).sort((a, b) => b.s - a.s), [top]);
   // Menu liga lengkap dikelompokkan per negara
   const byCountry = useMemo(() => {
     const g = new Map<string, Map<string, number>>();
@@ -199,10 +202,10 @@ export default function App() {
       {data && !shown.length && <p className="sub">Tidak ada pertandingan pada pilihan ini{q ? ' (sesuai pencarian)' : ''}.</p>}
       <div className="tabs"><button className={tab === 'formula' ? 'on' : ''} onClick={() => setTab('formula')}>📊 Prediksi Rumus</button><button className={tab === 'ai' ? 'on' : ''} onClick={() => setTab('ai')}>🤖 Opini AI</button></div>
       {isHome && tab === 'formula' && !!recs.length && <>
-        <h2 className="sec">🎯 Rekomendasi pick <small>(pilihan paling tegas per laga yang belum mulai)</small></h2>
-        <div className="recs">{recs.map(m => <div key={m.id} className={`rec ${m.headline!.market}`}>
-          <b>{m.headline!.label}</b><span className="rm">{MK[m.headline!.market]} · {pct(m.headline!.p)}</span>
+        <h2 className="sec">🎯 Rekomendasi pick <small>(1X2, HDP -/+, Over/Under, BTTS · laga yang belum mulai)</small></h2>
+        <div className="recs">{recs.map(({ m, opts }) => <div key={m.id} className="rec">
           <span className="rt">{m.home.name} vs {m.away.name}<small>{m.league.name} · {time(m.kickoff)}</small></span>
+          <div className="ropts">{opts.map(o => <span key={o.kind} className={`ro ${o.kind}`}><em>{o.tag}</em> <b>{o.label}</b> <i>{pct(o.p)}</i></span>)}</div>
           <span className={`chip ${m.confidenceLevel}`}>Keyakinan {m.confidence}</span>
         </div>)}</div>
       </>}
