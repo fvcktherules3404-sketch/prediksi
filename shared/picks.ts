@@ -13,6 +13,9 @@ export interface PickOpt {
   strength: number;
   /** true bila p >= minP (layak dijadikan saran) */
   strong: boolean;
+  /** Khusus HDP: sisi ('1' kandang / '2' tandang) dan garisnya */
+  side?: '1' | '2';
+  line?: number;
 }
 
 export const MIN_P = 0.6;
@@ -43,7 +46,7 @@ export function pickOptions(p: Src, minP = MIN_P): { main: PickOpt; others: Pick
   };
   const others: PickOpt[] = [];
 
-  const o = p.ou.find(x => x.line === 2.5) ?? p.ou[1];
+  const o = p.ou?.find(x => x.line === 2.5) ?? p.ou?.[1];
   if (o) {
     const over = o.over >= 0.5, pO = over ? o.over : o.under;
     others.push({ kind: 'ou', tag: 'O/U', label: `${over ? 'Over' : 'Under'} 2.5`, p: pO, strength: ((pO - 0.5) / 0.5) * 0.95, strong: pO >= minP });
@@ -53,18 +56,18 @@ export function pickOptions(p: Src, minP = MIN_P): { main: PickOpt; others: Pick
 
   // handicap[] berisi garis untuk tuan rumah; sisi tandang = cermin (garis dibalik, hasil dibalik)
   const favHome = h >= a;
-  const side = (isHome: boolean) => p.handicap.map(x => ({
+  const side = (isHome: boolean) => (p.handicap ?? []).map(x => ({
     line: isHome ? x.line : -x.line,
     e: isHome ? eff(x.win, x.halfWin, x.push, x.halfLoss) : eff(x.loss, x.halfLoss, x.push, x.halfWin),
   }));
   // HDP - : unggulan, garis negatif paling berat yang masih lolos
   let fav: { line: number; e: number } | null = null;
   for (const x of side(favHome)) if (x.line < 0 && x.line >= -1.5 && x.e >= minP && (!fav || x.line < fav.line)) fav = x;
-  if (fav) others.push({ kind: 'hdpFav', tag: 'HDP -', label: `${short(favHome ? p.home.name : p.away.name)} ${fmt(fav.line)}`, p: fav.e, strength: ((fav.e - 0.5) / 0.5) * 0.9, strong: true });
+  if (fav) others.push({ kind: 'hdpFav', tag: 'HDP -', label: `${short(favHome ? p.home.name : p.away.name)} ${fmt(fav.line)}`, p: fav.e, strength: ((fav.e - 0.5) / 0.5) * 0.9, strong: true, side: favHome ? '1' : '2', line: fav.line });
   // HDP + : non-unggulan, garis positif paling ringan (paling berani) yang masih lolos
   let dog: { line: number; e: number } | null = null;
   for (const x of side(!favHome)) if (x.line > 0 && x.line <= 2 && x.e >= minP && (!dog || x.line < dog.line)) dog = x;
-  if (dog) others.push({ kind: 'hdpDog', tag: 'HDP +', label: `${short(favHome ? p.away.name : p.home.name)} ${fmt(dog.line)}`, p: dog.e, strength: ((dog.e - 0.5) / 0.5) * 0.9, strong: true });
+  if (dog) others.push({ kind: 'hdpDog', tag: 'HDP +', label: `${short(favHome ? p.away.name : p.home.name)} ${fmt(dog.line)}`, p: dog.e, strength: ((dog.e - 0.5) / 0.5) * 0.9, strong: true, side: favHome ? '2' : '1', line: dog.line });
 
   others.sort((x, y) => y.strength - x.strength);
   return { main, others, best: others[0] };
