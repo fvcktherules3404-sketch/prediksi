@@ -14,9 +14,10 @@ export class ApiUsage {
   }
   get used() { return this.state.used; }
   canRequest(): boolean {
-    if (this.state.used >= this.limit - this.reserve) return false;
-    if (this.state.remaining !== undefined && this.state.remaining <= this.reserve) return false;
-    return true;
+    // Header sisa kuota dari API adalah sumber kebenaran; hitungan lokal hanya dipakai bila header belum pernah terbaca
+    // (request gagal ikut terhitung di `used`, sehingga bisa melebihi kuota asli).
+    if (this.state.remaining !== undefined) return this.state.remaining > this.reserve;
+    return this.state.used < this.limit - this.reserve;
   }
   record(remainingHeader?: string | null) {
     this.state.used++;
