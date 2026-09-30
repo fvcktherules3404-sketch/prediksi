@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Prediction, PredictionsFile, Metadata } from '../shared/types.ts';
 import { CFG } from './config.ts';
 import { ApiUsage } from './apiUsage.ts';
+import { hasSearch, tavilySummary } from './search.ts';
 import { FootballApi, readApiKeys } from './footballApi.ts';
 import { buildPrediction, leagueAverages } from './engine.ts';
 import { addAiSummaries, addAiOpinions } from './gemini.ts';
@@ -223,6 +224,7 @@ async function main() {
     market: { matched: mkt.map.size, requested: mkt.requested }, calibration: { n: cal.n, tau: cal.tau, marketW: cal.marketW },
     gemini: { used: ai.used, model: ai.model, summarized: ai.summarized, opinions: op.done, opinionAgree: op.agree, error: ai.error ?? op.error } };
   writeAtomic(CFG.dataDir, 'metadata.json', meta);
+  if (hasSearch()) console.log(`[tavily] ${tavilySummary()}`);
   console.log(meta.message, `API ${usage.used}/${usage.limit}`, `AI ${ai.summarized}`);
 }
 if (process.argv[1]?.endsWith("run.ts") || process.env.FORCE_RUN) main().catch(e => { console.error('::warning::' + e); process.exit(0); });
