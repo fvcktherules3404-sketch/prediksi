@@ -6,6 +6,7 @@ on:
     # kuota penuh (sebelumnya jam 06:00 WIB masih memakai sisa kuota kemarin -> habis).
     # Catatan: GitHub Actions scheduled workflow TIDAK dijamin jalan tepat waktu (bisa telat). Karena itu script
     # memakai waktu eksekusi aktual untuk menentukan window: 06:00 WIB terakhir s/d +24 jam.
+    - cron: '30 22 * * *'  # run dini: 05:30 WIB, hanya laga 06:00-08:00 (masih kuota hari kemarin UTC; ringan, cache & odds run malam dipakai ulang)
     - cron: '10 0 * * *'   # sesi pagi: 07:10 WIB (laga 06:00 - 20:59)
     - cron: '0 14 * * *'   # sesi malam: 21:00 WIB (laga 21:00 - 05:59)
   workflow_dispatch:   # GitHub -> Actions -> Daily Predictions -> Run workflow
