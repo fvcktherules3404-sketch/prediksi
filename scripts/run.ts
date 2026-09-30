@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Prediction, PredictionsFile, Metadata } from '../shared/types.ts';
 import { CFG } from './config.ts';
 import { ApiUsage } from './apiUsage.ts';
-import { FootballApi } from './footballApi.ts';
+import { FootballApi, readApiKeys } from './footballApi.ts';
 import { buildPrediction, leagueAverages } from './engine.ts';
 import { addAiSummaries, addAiOpinions } from './gemini.ts';
 import { loadResults, saveResults, collectResults, ownRows } from './results.ts';
@@ -73,10 +73,11 @@ async function main() {
   };
 
   try { const n = pruneCache(CFG.cacheDir, CFG.cachePruneDays); if (n) console.log(`[cache] ${n} file lama dihapus`); } catch {}
-  const key = process.env.FOOTBALL_API_KEY;
-  if (!key) return fail('FOOTBALL_API_KEY belum diisi di GitHub Secrets.');
+  const keys = readApiKeys(); // FOOTBALL_API_KEY (+ _2.._5 / FOOTBALL_API_KEYS): dipakai berurutan, pindah otomatis saat kuota habis
+  if (!keys.length) return fail('FOOTBALL_API_KEY belum diisi di GitHub Secrets.');
   const usage = new ApiUsage(path.join(CFG.cacheDir, 'usage.json'), CFG.dailyRequestLimit, CFG.requestReserve);
-  const api = new FootballApi(key, usage);
+  const api = new FootballApi(keys, usage);
+  console.log(`[api] ${keys.length} key API-Football, batas total ${usage.limit} request/hari`);
 
   // 1) Fixture (2 request: tanggal WIB hari ini & besok, lalu difilter ke window)
   const fxRes = [await api.get('fixtures', { date: w.dateA, timezone: 'Asia/Jakarta' }, CFG.fixturesTtlH),
