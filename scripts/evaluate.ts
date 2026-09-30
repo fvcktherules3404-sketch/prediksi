@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CFG } from './config.ts';
 import { loadResults } from './results.ts';
-import type { Calibration, HistRow, HitStat, MarketTotal, Prediction, Probs3 } from '../shared/types.ts';
+import type { Calibration, HistRow, HitStat, MarketTotal, Prediction, Probs3, TotalsSet } from '../shared/types.ts';
 import { hdpPick as pickHdp } from '../shared/picks.ts';
 
 /** ===== Rekam jejak & kalibrasi otomatis =====
@@ -58,6 +58,35 @@ const hdpRes = (s: Sample): 'win' | 'loss' | 'push' | null => {
 };
 const total = (xs: boolean[]): MarketTotal => { const h = xs.filter(Boolean).length; return { n: xs.length, hit: h, acc: xs.length ? r4(h / xs.length) : null }; };
 const HIST_MAX = 3000;
+
+/** Riwayat & total untuk pick Opini AI (hanya laga yang punya opini AI). Pasar yang tidak diisi AI dilewati; gabungan hanya untuk laga yang AI isi 1X2 + O/U + BTTS (gabungan 4 pasar: + HDP bukan push). */
+function aiBook(samples: Sample[]): { totals: TotalsSet; history: HistRow[] } {
+  const S = samples.filter(s => s.aiPick !== undefined);
+  const rows = S.map(s => {
+    const tg = s.goals[0] + s.goals[1] >= 3, bt = s.goals[0] > 0 && s.goals[1] > 0;
+    const x12 = s.aiPick === s.out, ou = s.aiOu ? (s.aiOu === 'over') === tg : null, btts = s.aiBtts ? (s.aiBtts === 'yes') === bt : null;
+    const hr = s.aiHdp ? ahResult(s.aiHdp.side === '1' ? s.goals[0] - s.goals[1] : s.goals[1] - s.goals[0], s.aiHdp.line) : null;
+    const res = hr === null ? null : hr === 1 ? 'win' as const : hr === -1 ? 'loss' as const : 'push' as const;
+    const c3 = ou === null || btts === null ? null : x12 && ou && btts;
+    const c4 = c3 === null || res === null || res === 'push' ? null : c3 && res === 'win';
+    return { s, x12, ou, btts, res, c3, c4 };
+  });
+  const history: HistRow[] = rows.sort((a, b) => b.s.ts - a.s.ts).slice(0, HIST_MAX).map(({ s, x12, ou, btts, res, c3, c4 }) => ({
+    id: s.id, ts: s.ts, league: s.league, home: s.home, away: s.away, score: `${s.goals[0]}-${s.goals[1]}`, conf: s.conf,
+    x12: { pick: s.aiPick!, hit: x12 },
+    ...(ou !== null ? { ou: { pick: s.aiOu!, hit: ou } } : {}), ...(btts !== null ? { btts: { pick: s.aiBtts!, hit: btts } } : {}),
+    ...(s.aiHdp && res ? { hdp: { side: s.aiHdp.side, line: s.aiHdp.line, res } } : {}), combo3: c3, combo4: c4,
+  }));
+  const hd = rows.map(r => r.res).filter((r): r is 'win' | 'loss' => r === 'win' || r === 'loss');
+  const nn = (xs: (boolean | null)[]) => xs.filter((x): x is boolean => x !== null);
+  const totals: TotalsSet = {
+    x12: total(rows.map(r => r.x12)), ou25: total(nn(rows.map(r => r.ou))), btts: total(nn(rows.map(r => r.btts))),
+    hdp: total(hd.map(r => r === 'win')), hdpPush: rows.filter(r => r.res === 'push').length,
+    overall: total([...rows.map(r => r.x12), ...nn(rows.map(r => r.ou)), ...nn(rows.map(r => r.btts)), ...hd.map(r => r === 'win')]),
+    combo3: total(nn(rows.map(r => r.c3))), combo4: total(nn(rows.map(r => r.c4))),
+  };
+  return { totals, history };
+}
 export function summarize(samples: Sample[], now = new Date()): Calibration {
   const n = samples.length;
   const bins = [[0, 20], [20, 40], [40, 60], [60, 101]].map(([lo, hi]) => {
@@ -101,6 +130,7 @@ export function summarize(samples: Sample[], now = new Date()): Calibration {
     overall: total([...samples.map(s => s.pick === s.out), ...samples.map(ouHit), ...samples.map(bttsHit), ...hdpDone.map(r => r === 'win')]),
     combo3: total(samples.map(combo3)), combo4: total(c4),
   };
+  const aiB = aiBook(samples);
   return {
     version: 1, updatedAt: now.toISOString(), n,
     acc: hit(samples.map(s => s.pick === s.out)).acc, brier: r4(mean(samples.map(s => brier(s.probs, s.out)))), logloss: r4(mean(samples.map(s => ll(s.probs, s.out)))),
@@ -113,7 +143,7 @@ export function summarize(samples: Sample[], now = new Date()): Calibration {
       btts: hit(samples.filter(s => s.aiBtts).map(s => (s.aiBtts === 'yes') === (s.goals[0] > 0 && s.goals[1] > 0))),
       hdp: hit(samples.filter(s => s.aiHdp).map(s => ahResult(s.aiHdp!.side === '1' ? s.goals[0] - s.goals[1] : s.goals[1] - s.goals[0], s.aiHdp!.line)).filter(r => r !== 0).map(r => r === 1)) },
     market: { n: mk.length, llModel: r4(llAt(0)), llMarket: r4(llAt(1)), llBlend: r4(llAt(marketW)), bestW: bestW === null ? null : r4(bestW) },
-    tuning: { tauRaw: r4(tauRaw), tau: r4(tau)!, marketW: r4(marketW)!, note }, recent, totals, history,
+    tuning: { tauRaw: r4(tauRaw), tau: r4(tau)!, marketW: r4(marketW)!, note }, recent, totals, history, aiTotals: aiB.totals, aiHistory: aiB.history,
   };
 }
 
