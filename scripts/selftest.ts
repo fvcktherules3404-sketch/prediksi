@@ -12,6 +12,8 @@ import { pickHeadline } from './headline.ts';
 import { isSeniorMen } from './filter.ts';
 import { marketElo } from './engine.ts';
 import { validateAiRow, extractJsonArray } from './geminiStandings.ts';
+import { ApiUsage, keyId } from './apiUsage.ts';
+import { FootballApi, readApiKeys } from './footballApi.ts';
 
 const m = scoreMatrix(1.6, 1.1);
 assert(Math.abs(m.flat().reduce((a, b) => a + b, 0) - 1) < 1e-9, 'matriks harus berjumlah 1');
@@ -278,3 +280,29 @@ import { buildTable } from './run.ts';
   assert.equal(pNone.stakes, undefined, 'tanpa tabel => tanpa field stakes');
 }
 console.log('stakes OK');
+
+{
+  // multi-key: key 1 habis (batas harian) -> pindah ke key 2; semua habis -> null
+  assert.deepEqual(readApiKeys({ FOOTBALL_API_KEY: 'a', FOOTBALL_API_KEY_2: 'b', FOOTBALL_API_KEY_3: '', FOOTBALL_API_KEYS: 'b, c' }), ['a', 'b', 'c']);
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'usage-')), 'usage.json');
+  const realFetch = globalThis.fetch, seenKeys: string[] = [];
+  globalThis.fetch = (async (_u: any, init: any) => {
+    const k = init.headers['x-apisports-key']; seenKeys.push(k);
+    const body = k === 'K1' ? { errors: { requests: 'You have reached the request limit for the day, Go to https://dashboard.api-football.com' }, response: [] } : { errors: [], response: [{ ok: k }] };
+    return new Response(JSON.stringify(body), { headers: { 'x-ratelimit-requests-remaining': k === 'K1' ? '0' : '90' } });
+  }) as any;
+  try {
+    const usage = new ApiUsage(f, 100, 8), api = new FootballApi(['K1', 'K2'], usage);
+    const r = await api.get('fixtures', { date: '2026-01-01' }, 0, false);
+    assert.deepEqual(r?.data, [{ ok: 'K2' }], 'pindah ke key 2 setelah key 1 habis');
+    assert.deepEqual(seenKeys, ['K1', 'K2']);
+    await api.get('fixtures', { date: '2026-01-02' }, 0, false);
+    assert.equal(seenKeys.filter(k => k === 'K1').length, 1, 'key 1 tidak dicoba lagi hari itu');
+    assert.equal(usage.limit, 200);
+    const again = new ApiUsage(f, 100, 8); new FootballApi(['K1', 'K2'], again);
+    assert.equal(again.pick() !== null, true, 'status habis tersimpan; key 2 masih ada');
+    const both = new ApiUsage(f, 100, 8); both.setKeys([keyId('K1')]);
+    assert.equal(both.pick(), null, 'hanya key 1 (habis) -> tidak ada key');
+  } finally { globalThis.fetch = realFetch; }
+}
+console.log('multi-key OK');
