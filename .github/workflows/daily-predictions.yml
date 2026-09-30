@@ -2,10 +2,11 @@ name: Daily Predictions
 
 on:
   schedule:
-    # 23:00 UTC = 06:00 WIB. Catatan: GitHub Actions scheduled workflow TIDAK dijamin
-    # jalan tepat waktu (bisa telat). Karena itu script memakai waktu eksekusi aktual
-    # untuk menentukan window: 06:00 WIB terakhir s/d +24 jam (05:59:59 WIB).
-    - cron: '0 23 * * *'   # sesi pagi: 06:00 WIB (laga 06:00 - 20:59)
+    # Kuota API-Football reset 00:00 UTC (07:00 WIB). Sesi pagi dijalankan SETELAH reset supaya
+    # kuota penuh (sebelumnya jam 06:00 WIB masih memakai sisa kuota kemarin -> habis).
+    # Catatan: GitHub Actions scheduled workflow TIDAK dijamin jalan tepat waktu (bisa telat). Karena itu script
+    # memakai waktu eksekusi aktual untuk menentukan window: 06:00 WIB terakhir s/d +24 jam.
+    - cron: '10 0 * * *'   # sesi pagi: 07:10 WIB (laga 06:00 - 20:59)
     - cron: '0 14 * * *'   # sesi malam: 21:00 WIB (laga 21:00 - 05:59)
   workflow_dispatch:   # GitHub -> Actions -> Daily Predictions -> Run workflow
     inputs:
@@ -40,6 +41,8 @@ jobs:
           FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           BACKFILL_DAYS: ${{ inputs.backfill_days || '5' }}
+          ALL_LEAGUES: 'false'        # hanya liga pilihan (lihat DEFAULT_LEAGUES di scripts/config.ts)
+          ODDS_MAX_REQUESTS: '15'     # odds diurutkan menurut prioritas liga
         run: npm run predict
       - name: Commit data
         run: |
