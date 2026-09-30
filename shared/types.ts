@@ -6,7 +6,18 @@ export interface TeamInfo { id:number; name:string; logo?:string; rank?:number|n
 export interface MarketInfo { home:number; draw:number; away:number; over25?:number; books:number }
 export interface Probs3 { home:number; draw:number; away:number }
 /** Situasi tabel satu tim menjelang laga (lihat scripts/stakes.ts). need: 1 = sedang berebut sesuatu, 0 = tanpa target. */
-export interface StakeInfo { kind:'title'|'europe'|'safe'|'relegation'; need:number; defending:boolean; label:string }
+export interface StakeInfo { kind:'title'|'europe'|'safe'|'relegation'|'champion'|'relegated'; need:number; defending:boolean; label:string }
+/** Konteks laga di luar tabel liga (lihat scripts/context.ts): final, derbi, leg kedua, kelelahan, situasi grup timnas. */
+export type GroupState = 'alive'|'through'|'out';
+export interface CtxTag { kind:'final'|'derby'|'leg2'|'group'|'fatigue'|'ai'; label:string; title?:string; /** true = berasal dari pembacaan berita oleh AI (belum terverifikasi resmi) */ ai?:boolean }
+export interface MatchContext {
+  tags:CtxTag[];
+  /** pengali xG yang dipakai (kandang, tandang); 1 = tanpa efek */
+  mul:{ home:number; away:number };
+  /** faktor pengali skor keyakinan (<=1) */
+  confFactor:number;
+  info:{ aggHome?:number; aggSrc?:'own'|'ai'; rest?:{ home:number; away:number }; group?:{ home:GroupState; away:GroupState; name:string }; ai?:{ nSrc:number; signals:number; xg:{ home:number; away:number } } };
+}
 /** Prediksi utama satu laga (tampil besar di tengah kartu): pilihan pasar dengan ketegasan tertinggi. */
 export interface Headline { market:'1x2'|'hdp'|'ou'|'btts'; label:string; sub?:string; p:number; strength:number }
 export type Slot = 'pagi'|'malam';
@@ -40,6 +51,8 @@ export interface Prediction {
   rawProbs?:Probs3;
   market?:MarketInfo;
   /** Taruhan laga: situasi tabel kedua tim, progres musim (0..1), dan penyesuaian xG yang dipakai (0 bila dimatikan). */
+  /** Konteks tambahan (final/derbi/leg 2/kelelahan/grup timnas). Tidak ada bila tidak ada konteks relevan. */
+  context?:MatchContext;
   stakes?:{ home:StakeInfo; away:StakeInfo; phase:number; adj:{ home:number; away:number } };
   calib?:{ tau:number; marketW:number };
 }
@@ -59,6 +72,8 @@ export interface Metadata {
   market?:{ matched:number; requested:number };
   calibration?:{ n:number; tau:number; marketW:number };
   gemini?:{ used:boolean; model?:string; summarized:number; opinions?:number; opinionAgree?:number; error?:string };
+  /** v6: konteks laga dari AI: laga yang diperiksa, laga dengan sinyal lolos validasi, jumlah sinyal */
+  aiContext?:{ checked:number; matches:number; signals:number };
 }
 export interface HitStat { n:number; acc:number|null }
 /** Rekam jejak prediksi vs hasil sebenarnya (ditulis scripts/evaluate.ts ke public/data/calibration.json). */
