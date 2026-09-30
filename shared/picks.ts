@@ -72,3 +72,15 @@ export function pickOptions(p: Src, minP = MIN_P): { main: PickOpt; others: Pick
   others.sort((x, y) => y.strength - x.strength);
   return { main, others, best: others[0] };
 }
+
+/**
+ * Pick HDP untuk satu laga (chip "HDP" di kartu & penilaian di Riwayat): HDP - bila tim unggulan, HDP + bila tim lemah, mana yang lebih tegas.
+ * Dicari dari peluang >= minP; bila tidak ada, ambang diturunkan bertahap (0.55 lalu 0.5) supaya laga tetap punya pick HDP.
+ */
+export function hdpPick(p: Src, minP = MIN_P): PickOpt | undefined {
+  for (const t of [minP, 0.55, 0.5]) {
+    const o = pickOptions(p, Math.min(t, minP)).others.find(x => x.kind === 'hdpFav' || x.kind === 'hdpDog');
+    if (o) return o;
+  }
+  return undefined;
+}
