@@ -17,3 +17,13 @@
 .rec .ro.hdpFav,.rec .ro.hdpDog{border-color:rgba(147,51,234,.4);background:rgba(147,51,234,.1)}.rec .ro.hdpFav i,.rec .ro.hdpDog i{color:#7e22ce}
 .rec .ro.ou{border-color:rgba(22,163,74,.4);background:rgba(22,163,74,.1)}.rec .ro.ou i{color:#15803d}
 .rec .ro.btts{border-color:rgba(234,88,12,.4);background:rgba(234,88,12,.1)}.rec .ro.btts i{color:#c2410c}
+
+/* Halaman Riwayat */
+.stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin:6px 0}
+.stats>div{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:8px 10px}
+.stats small{display:block;color:var(--mut);font-size:12px}.stats small em{font-style:normal;opacity:.8}
+.stats b{font-size:20px}
+.how{margin:6px 0}.how p{margin:.4em 0}
+.track .rec.hscroll{max-height:65vh;overflow-y:auto;-webkit-overflow-scrolling:touch;align-content:flex-start}
+.track .rec .push{color:#854d0e;background:#fef9c3}
+.track .rec span small{opacity:.75}
