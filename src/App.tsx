@@ -263,7 +263,7 @@ export default function App() {
       <p className="sub">Model Poisson + Dixon-Coles + Elo, digabung probabilitas pasar dan dikalibrasi dari rekam jejak. 100% gratis.</p>
       {meta?.status === 'failed' && <div className="warn">Update terakhir gagal ({meta.message}). Menampilkan prediksi terakhir yang berhasil.</div>}
       {err && <div className="warn">Belum ada data prediksi ({err}). Jalankan workflow “Daily Predictions” di GitHub Actions.</div>}
-      {data && <p className="sub">Laga {time(data.window.start)} → {time(data.window.end)} · diperbarui {time(data.generatedAt)} · update otomatis 06:00 (laga sampai sore) & 21:00 WIB (laga malam–dini) · AI: {data.ai.used ? `${data.ai.summarized} ringkasan (${data.ai.model})` : 'tidak aktif'}</p>}
+      {data && <p className="sub">Laga {time(data.window.start)} → {time(data.window.end)} · diperbarui {time(data.generatedAt)} · update otomatis 05:30 (laga 06:00–08:00), 07:10 (laga sampai sore) & 21:00 WIB (laga malam–dini) · AI: {data.ai.used ? `${data.ai.summarized} ringkasan (${data.ai.model})` : 'tidak aktif'}</p>}
       <div className="tabs"><button className={view === 'prediksi' ? 'on' : ''} onClick={() => setView('prediksi')}>⚽ Prediksi</button><button className={view === 'riwayat' ? 'on' : ''} onClick={() => setView('riwayat')}>📜 Riwayat</button></div>
       {view === 'riwayat' ? (cal ? <History c={cal} src={hsrc} setSrc={setHsrc} /> : <p className="sub">Belum ada data riwayat.</p>) : <>
       {cal && <Track c={cal} />}
