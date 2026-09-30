@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CFG } from './config.ts';
+import { readTavilyKeys, webSearch, tavilySummary } from './search.ts';
 import { scoreMatrix, ahLine, buildPrediction, leagueAverages } from './engine.ts';
 import { computeWindow } from './run.ts';
 import { matchTeams, type Row } from './standings.ts';
@@ -459,3 +460,25 @@ console.log('konteks AI OK');
   } finally { globalThis.fetch = realFetch; }
 }
 console.log('multi-key OK');
+
+{
+  // Tavily multi-key: key 1 kuota habis (HTTP 432) -> pindah ke key 2; status habis tersimpan; 401 hanya dilewati (tidak disimpan)
+  assert.deepEqual(readTavilyKeys({ TAVILY_API_KEY: 'a', TAVILY_API_KEY_2: 'b', TAVILY_API_KEY_3: '', TAVILY_API_KEYS: 'b, c' }), ['a', 'b', 'c']);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tav-')), oldDir = CFG.cacheDir, realFetch = globalThis.fetch, seen: string[] = [];
+  const oldEnv = { k1: process.env.TAVILY_API_KEY, k2: process.env.TAVILY_API_KEY_2, k3: process.env.TAVILY_API_KEY_3 };
+  CFG.cacheDir = tmp; process.env.TAVILY_API_KEY = 'T1'; process.env.TAVILY_API_KEY_2 = 'T2'; delete process.env.TAVILY_API_KEY_3;
+  globalThis.fetch = (async (_u: any, init: any) => {
+    const k = String(init.headers.Authorization).replace('Bearer ', ''); seen.push(k);
+    if (k === 'T1') return new Response('{"detail":{"error":"This request exceeds your plan\'s set usage limit."}}', { status: 432 });
+    return new Response(JSON.stringify({ results: [{ title: 't', url: 'https://x.test/a', content: 'isi' }] }));
+  }) as any;
+  try {
+    const r = await webSearch('q1');
+    assert.equal(r.length, 1); assert.deepEqual(seen, ['T1', 'T2'], 'pindah ke key 2 setelah key 1 kena batas kuota');
+    await webSearch('q2');
+    assert.equal(seen.filter(k => k === 'T1').length, 1, 'key 1 tidak dicoba lagi bulan itu');
+    assert(/key1 0\/1000 HABIS/.test(tavilySummary()) && /key2 2\/1000/.test(tavilySummary()), tavilySummary());
+    const st = JSON.parse(fs.readFileSync(path.join(tmp, 'tavily_usage.json'), 'utf8')); assert.equal(Object.values<any>(st.keys).filter(x => x.exhausted).length, 1);
+  } finally { globalThis.fetch = realFetch; CFG.cacheDir = oldDir; for (const [n, v] of [['TAVILY_API_KEY', oldEnv.k1], ['TAVILY_API_KEY_2', oldEnv.k2], ['TAVILY_API_KEY_3', oldEnv.k3]] as const) { if (v === undefined) delete process.env[n]; else process.env[n] = v; } }
+}
+console.log('tavily multi-key OK');
