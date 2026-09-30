@@ -1,16 +1,20 @@
 const env = process.env;
 // Liga yang diprediksi (ID API-Football). Ubah lewat env LEAGUE_IDS="39,140" atau ALL_LEAGUES=true
 const DEFAULT_LEAGUES = [
-  // inti (sudah ada)
-  39,40,140,135,78,61,88,94,144,179,203,2,3,848,1,4,5,6,9,10,17,253,307,274,71,128,98,292,
-  // v4: divisi bawah & piala Eropa (ID API-Football; cek di dashboard bila ada yang tidak muncul)
-  41,42,45,48,62,66,79,81,136,137,141,143,180,
-  // Eropa lain
-  103,106,113,119,197,207,218,235,
-  // Amerika, Asia, Oseania
-  11,13,72,239,242,262,265,281,99,293,169,188,
-  // v4.1: Afrika (kualifikasi Piala Afrika 2027 = 36, Liga Champions CAF = 12, Piala Konfederasi = 20, liga domestik) + kualifikasi Piala Dunia/Piala Emas
-  36,12,20,233,200,186,202,288,332,29,30,31,22
+  // URUTAN = PRIORITAS (dipakai untuk jatah odds): liga terbesar di atas.
+  // top 5 Eropa + kompetisi klub Eropa + liga besar lain
+  39,140,135,78,61,2,3,848,88,94,144,203,179,235,
+  // Amerika & Asia populer untuk parlay
+  71,128,253,262,98,292,307,274,188,169,13,11,17,
+  // tim nasional: event besar, kualifikasi, friendly (10 = timnas, 667 = klub)
+  1,4,5,6,9,22,29,30,31,32,33,34,35,36,10,667,
+  // kasta 2-3 & piala domestik
+  40,41,42,141,136,79,80,62,63,89,95,145,204,180,72,129,99,293,
+  45,48,143,137,81,66,
+  // liga Eropa lain (kasta 1)
+  103,106,113,119,197,207,218,333,345,210,286,283,
+  // Amerika lain
+  239,265,242,268,281
 ];
 export const CFG = {
   tzOffsetHours: 7,               // WIB
