@@ -37,12 +37,26 @@ function Track({ c }: { c: Calibration }) {
 }
 const tot = (t?: MarketTotal) => (t && t.n ? `${t.hit}/${t.n} (${acc(t.acc)})` : '–');
 const mark = (r: 'ok' | 'no' | 'push') => (r === 'ok' ? '✓' : r === 'no' ? '✗' : '↔');
-type HTab = 'x12' | 'hdp' | 'ou' | 'btts' | 'combo';
-const HTABS: [HTab, string][] = [['x12', '1X2'], ['hdp', 'HDP'], ['ou', 'Over/Under'], ['btts', 'BTTS'], ['combo', 'Gabungan']];
+type HTab = 'ok' | 'x12' | 'hdp' | 'ou' | 'btts' | 'combo';
+const HTABS: [HTab, string][] = [['ok', '✅ Yang Benar'], ['x12', '1X2'], ['hdp', 'HDP'], ['ou', 'Over/Under'], ['btts', 'BTTS'], ['combo', 'Gabungan']];
 interface HItem { id: number; label: string; res: 'ok' | 'no' | 'push'; note: string; title: string }
+/** Pasar yang BENAR pada satu laga (tanpa double chance). HDP push bukan benar. Kosong = semua tebakan meleset. */
+const okOf = (r: HistRow): string[] => [r.x12.hit && '1X2', r.ou?.hit && (r.ou.pick === 'over' ? 'Over' : 'Under'), r.btts?.hit && 'BTTS', r.hdp?.res === 'win' && 'HDP'].filter((x): x is string => !!x);
+/** Ringkasan tab "Yang Benar": persen laga yang minimal 1 pasarnya benar + peringkat pasar yang paling sering benar. */
+function okSummary(hist: HistRow[]) {
+  const agg: [string, { n: number; hit: number }][] = [['1X2', { n: 0, hit: 0 }], ['Over/Under 2.5', { n: 0, hit: 0 }], ['BTTS', { n: 0, hit: 0 }], ['HDP', { n: 0, hit: 0 }]];
+  const add = (i: number, hit: boolean) => { agg[i][1].n++; if (hit) agg[i][1].hit++; };
+  let any = 0;
+  for (const r of hist) {
+    add(0, r.x12.hit); if (r.ou) add(1, r.ou.hit); if (r.btts) add(2, r.btts.hit); if (r.hdp && r.hdp.res !== 'push') add(3, r.hdp.res === 'win');
+    if (okOf(r).length) any++;
+  }
+  const rank = agg.filter(([, v]) => v.n > 0).sort((a, b) => b[1].hit / b[1].n - a[1].hit / a[1].n || b[1].n - a[1].n);
+  return { n: hist.length, any, rank };
+}
 /** Halaman Riwayat: ringkasan rekam jejak, total benar, winrate gabungan, dan daftar SEMUA laga dinilai per pasar (tab). Chip ✓ = tebakan benar, ✗ = salah. */
 function History({ c, src, setSrc }: { c: Calibration; src: 'formula' | 'ai'; setSrc: (v: 'formula' | 'ai') => void }) {
-  const [tab, setTab] = useState<HTab>('x12');
+  const [tab, setTab] = useState<HTab>('ok');
   const ai = src === 'ai';
   const sw = <div className="tabs">{([['formula', '📊 Riwayat Rumus'], ['ai', '🤖 Riwayat AI']] as const).map(([k, l]) => <button key={k} className={src === k ? 'on' : ''} onClick={() => setSrc(k)}>{l}</button>)}</div>;
   if (!c.n) return <div className="track"><b>Riwayat</b> — belum ada laga yang selesai dinilai. Akan terisi otomatis setelah hasil pertandingan terkumpul.</div>;
@@ -55,6 +69,7 @@ function History({ c, src, setSrc }: { c: Calibration; src: 'formula' | 'ai'; se
       const label = `${r.home} ${r.score} ${r.away}`, title = `${r.league ?? ''} · ${time(new Date(r.ts * 1000).toISOString())} · keyakinan ${r.conf}`;
       const it = (res: 'ok' | 'no' | 'push', note: string): HItem[] => [{ id: r.id, label, res, note, title }];
       const ok = (b: boolean) => (b ? 'ok' as const : 'no' as const);
+      if (tab === 'ok') { const w = okOf(r); return it(w.length ? 'ok' : 'no', w.map(x => `${x} ✓`).join(' · ')); }
       if (tab === 'x12') return it(ok(r.x12.hit), pk1(r.home, r.away, r.x12.pick));
       if (tab === 'ou') return r.ou ? it(ok(r.ou.hit), `${r.ou.pick === 'over' ? 'Over' : 'Under'} 2.5`) : [];
       if (tab === 'btts') return r.btts ? it(ok(r.btts.hit), `BTTS ${r.btts.pick === 'yes' ? 'Ya' : 'Tidak'}`) : [];
@@ -96,14 +111,24 @@ function History({ c, src, setSrc }: { c: Calibration; src: 'formula' | 'ai'; se
       <h2 className="sec">📜 Semua laga dinilai <small>(terbaru di atas)</small></h2>
       <div className="tabs">{HTABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}</div>
       <details className="how"><summary>Cara membaca ✓ / ✗</summary>
+        <p><b>Yang Benar:</b> tiap laga hanya menampilkan pasar yang tebakannya benar (✓). Laga merah = tidak ada satu pun tebakan yang benar. Double chance tidak dipakai.</p>
         <p><b>1X2:</b> ✓ bila hasil 90 menit sama dengan tebakan rumus (kandang menang / seri / tandang menang), ✗ bila beda. Seri hanya benar bila skor akhirnya seri; perpanjangan waktu & penalti tidak dihitung.</p>
         <p><b>Over/Under 2.5:</b> tebak Over bila peluang Over ≥ 50%, kalau tidak Under. ✓ bila total gol 3+ (Over) atau 2 ke bawah (Under).</p>
         <p><b>BTTS:</b> tebak Ya bila peluang ≥ 50%. ✓ bila kedua tim mencetak gol (Ya) atau salah satunya nirbobol (Tidak).</p>
         <p><b>HDP:</b> pick HDP di kartu (HDP - bila tim unggulan, HDP + bila tim lemah). ✓ menang (penuh/setengah), ✗ kalah, ↔ push, tidak dihitung.</p>
       </details>
-      <p className="sub">{HTABS.find(x => x[0] === tab)![1]}: ✓ {nOk} · ✗ {nNo}{nPush ? ` · ↔ ${nPush}` : ''}{nOk + nNo ? ` · benar ${Math.round(nOk / (nOk + nNo) * 100)}%` : ''}</p>
+      {tab === 'ok' && hist && !!hist.length && (() => { const o = okSummary(hist); return <>
+        <h2 className="sec">🎯 Laga yang ada tebakan benarnya</h2>
+        <div className="stats">
+          <div><small>Minimal 1 pasar benar · dari {o.n} laga</small><b>{o.any}/{o.n} ({acc(o.any / o.n)})</b></div>
+          <div><small>Tidak ada satu pun yang benar (merah)</small><b>{o.n - o.any}/{o.n} ({acc((o.n - o.any) / o.n)})</b></div>
+        </div>
+        <h2 className="sec">🏅 Pasar yang paling sering benar <small>(persen = benar ÷ jumlah tebakan di pasar itu)</small></h2>
+        <div className="stats">{o.rank.map(([k, v], i) => <div key={k}><small>{i + 1}. {k}{i === 0 ? ' · paling sering benar' : ''}</small><b>{v.hit}/{v.n} ({acc(v.hit / v.n)})</b></div>)}</div>
+      </>; })()}
+      {tab !== 'ok' && <p className="sub">{HTABS.find(x => x[0] === tab)![1]}: ✓ {nOk} · ✗ {nNo}{nPush ? ` · ↔ ${nPush}` : ''}{nOk + nNo ? ` · benar ${Math.round(nOk / (nOk + nNo) * 100)}%` : ''}</p>}
       <div className="track"><div className="rec hscroll">
-        {items.map((i, k) => <span key={`${i.id}-${k}`} className={i.res === 'ok' ? 'ok' : i.res === 'no' ? 'no' : 'push'} title={i.title}>{mark(i.res)} {i.label} <small>· {i.note}</small></span>)}
+        {items.map((i, k) => <span key={`${i.id}-${k}`} className={i.res === 'ok' ? 'ok' : i.res === 'no' ? 'no' : 'push'} title={i.title}>{tab === 'ok' ? <>{i.label}{i.note && <><br /><small>{i.note}</small></>}</> : <>{mark(i.res)} {i.label} <small>· {i.note}</small></>}</span>)}
         {!items.length && <span>{tab === 'x12' || c.history ? 'Belum ada data untuk pasar ini.' : 'Akan terisi setelah update otomatis berikutnya.'}</span>}
       </div></div>
     </section>
