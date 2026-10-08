@@ -5,7 +5,7 @@ const DEFAULT_LEAGUES = [
   // top 5 Eropa + kompetisi klub Eropa + liga besar lain
   39,140,135,78,61,2,3,848,88,94,144,203,179,235,
   // Amerika & Asia populer untuk parlay
-  71,128,253,262,98,292,307,274,188,169,13,11,17,
+  71,128,253,262,98,292,307,274,188,169,13,11,17,1129,
   // tim nasional: event besar, kualifikasi, friendly (10 = timnas, 667 = klub)
   1,4,5,6,9,22,29,30,31,32,33,34,35,36,10,667,
   // Asia: Gulf Cup (25), FIFA Asean Cup (1247)
